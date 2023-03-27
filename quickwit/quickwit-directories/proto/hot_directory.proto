@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+// Encodes the position of a slice.
+//
+// This message expresses that
+// the file bytes [start..start + len)
+// are stored at the address [addr..addr+len)
+message FileSliceEntry {
+    uint64 start = 1;
+    uint64 len = 2;
+    uint64 addr = 3;
+}
+
+message FileEntry {
+    string filepath = 1;
+    // Entire file length.
+    uint64 file_length = 2;
+    repeated FileSliceEntry file_slices = 3;
+}
+
+message CacheMeta {
+    repeated FileEntry file_entries = 1;
+}

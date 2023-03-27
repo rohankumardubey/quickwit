@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::{fmt, io};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use tantivy::directory::error::OpenReadError;
 use tantivy::directory::{FileHandle, FileSlice, OwnedBytes};
 use tantivy::error::DataCorruption;
@@ -32,28 +31,9 @@ use tantivy::{Directory, HasLen, Index, IndexReader, ReloadPolicy};
 
 use crate::{CachingDirectory, DebugProxyDirectory};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SliceCacheIndexEntry {
-    start: usize, //< legacy. We keep this instead of range due to existing indices.
-    stop: usize,
-    addr: usize,
-}
+mod hot_cache;
 
-impl SliceCacheIndexEntry {
-    pub fn len(&self) -> usize {
-        self.range().len()
-    }
 
-    pub fn range(&self) -> Range<usize> {
-        self.start..self.stop
-    }
-}
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct SliceCacheIndex {
-    total_len: u64,
-    slices: Vec<SliceCacheIndexEntry>,
-}
 impl SliceCacheIndex {
     pub fn is_complete(&self) -> bool {
         if self.slices.len() != 1 {
@@ -62,10 +42,10 @@ impl SliceCacheIndex {
         self.slices[0].len() as u64 == self.total_len
     }
 
-    pub fn get(&self, byte_range: Range<usize>) -> Option<usize> {
+    pub fn get(&self, byte_range: Range<u64>) -> Option<u64> {
         let entry_idx = match self
             .slices
-            .binary_search_by_key(&byte_range.start, |entry| entry.range().start)
+            .binary_search_by_key(&byte_range.start, |entry| entry.start)
         {
             Ok(idx) => idx,
             Err(0) => {
@@ -77,58 +57,54 @@ impl SliceCacheIndex {
         if entry.range().start > byte_range.start || entry.range().end < byte_range.end {
             return None;
         }
-        Some(entry.addr + byte_range.start - entry.range().start)
+        Some(entry.addr + byte_range.start - entry.start)
     }
 }
 
-#[derive(Default)]
-struct StaticDirectoryCacheBuilder {
-    file_cache_builder: HashMap<PathBuf, StaticSliceCacheBuilder>,
-    file_lengths: HashMap<PathBuf, u64>, // a mapping from file path to file size in bytes
-}
+
 
 impl StaticDirectoryCacheBuilder {
-    pub fn add_file(&mut self, path: &Path, file_len: u64) -> &mut StaticSliceCacheBuilder {
-        self.file_lengths.insert(path.to_owned(), file_len);
-        self.file_cache_builder
-            .entry(path.to_owned())
-            .or_insert_with(|| StaticSliceCacheBuilder::new(file_len))
+    /// Adds a new entry for a given file.
+    /// This methods retursn a StaticSliceCacheBuilder, to which the client is
+    /// expected to record all of the file's slice present in the hotcache.
+    ///
+    /// Panics if the file is already present.
+    pub fn add_file(&mut self, path: &Path, file_length: u64) -> &mut FileEntry {
+        assert!(!self.file_paths.contains(path));
+        self.footer.file_entries.push(FileEntry {
+            filepath: path.to_string_lossy().to_string(), // TODO deal with to_string_loss
+            file_length,
+            file_slices: Default::default(),
+        });
+        self.footer.file_entries.last_mut().unwrap()
     }
 
     /// Flush needs to be called afterwards.
     pub fn write(self, wrt: &mut dyn io::Write) -> tantivy::Result<()> {
         // Write format version
         wrt.write_all(b"\x00")?;
-
-        let file_lengths_bytes = serde_cbor::to_vec(&self.file_lengths).unwrap();
-        wrt.write_all(&(file_lengths_bytes.len() as u64).to_le_bytes())?;
-        wrt.write_all(&file_lengths_bytes[..])?;
-
-        let mut data_buffer = Vec::new();
-        let mut data_idx: Vec<(PathBuf, u64)> = Vec::new();
-        let mut offset = 0u64;
-        for (path, cache) in self.file_cache_builder {
-            let buf = cache.flush()?;
-            data_idx.push((path, offset));
-            offset += buf.len() as u64;
-            data_buffer.extend_from_slice(&buf);
-        }
-        let idx_bytes = serde_cbor::to_vec(&data_idx).unwrap();
-        wrt.write_all(&(idx_bytes.len() as u64).to_le_bytes())?;
-        wrt.write_all(&idx_bytes[..])?;
-        wrt.write_all(&data_buffer[..])?;
+        let buffer: Vec<u8> = self.footer.encode_to_vec();
+        wrt.write_all(&(buffer.len() as u64).to_le_bytes())?;
+        wrt.write_all(&buffer[..])?;
+        // let file_lengths_bytes = serde_cbor::to_vec(&self.file_lengths).unwrap();
+        // let mut data_buffer = Vec::new();
+        // let mut data_idx: Vec<(PathBuf, u64)> = Vec::new();
+        // let mut offset = 0u64;
+        // for (path, cache) in self.file_cache_builder {
+        //     let buf = cache.flush()?;
+        //     data_idx.push((path, offset));
+        //     offset += buf.len() as u64;
+        //     data_buffer.extend_from_slice(&buf);
+        // }
+        // let idx_bytes = serde_cbor::to_vec(&data_idx).unwrap();
+        // wrt.write_all(&(idx_bytes.len() as u64).to_le_bytes())?;
+        // wrt.write_all(&idx_bytes[..])?;
+        // wrt.write_all(&data_buffer[..])?;
 
         Ok(())
     }
 }
 
-fn deserialize_cbor<T>(bytes: &mut OwnedBytes) -> serde_cbor::Result<T>
-where T: serde::de::DeserializeOwned {
-    let len = bytes.read_u64();
-    let value = serde_cbor::from_reader(&bytes.as_slice()[..len as usize]);
-    bytes.advance(len as usize);
-    value
-}
 
 #[derive(Debug)]
 struct StaticDirectoryCache {
@@ -493,7 +469,7 @@ pub fn write_hotcache<D: Directory>(
             continue;
         }
         let file_slice = file_slice_res?;
-        let file_cache_builder = cache_builder.add_file(&file_path, file_slice.len() as u64);
+        let file_entry = cache_builder.add_file(&file_path, file_slice.len() as u64);
         if let Some(intervals) = per_file_slices.get(&file_path) {
             for byte_range in intervals {
                 let len = byte_range.len();
@@ -509,7 +485,7 @@ pub fn write_hotcache<D: Directory>(
                     || len < 10_000_000
                 {
                     let bytes = file_slice.read_bytes_slice(byte_range.clone())?;
-                    file_cache_builder.add_bytes(bytes.as_slice(), byte_range.start);
+                    file_entry.add_bytes(bytes.as_slice(), byte_range.start);
                 }
             }
         }
