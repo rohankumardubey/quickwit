@@ -37,6 +37,7 @@ mod search_job_placer;
 mod search_response_rest;
 mod search_stream;
 mod service;
+mod sort_by;
 mod thread_pool;
 
 mod metrics;

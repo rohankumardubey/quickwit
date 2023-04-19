@@ -188,8 +188,7 @@ impl From<SearchStreamRequest> for SearchRequest {
             end_timestamp: item.end_timestamp,
             max_hits: 0,
             start_offset: 0,
-            sort_by_field: None,
-            sort_order: None,
+            sort_by: None,
             aggregation_request: None,
         }
     }

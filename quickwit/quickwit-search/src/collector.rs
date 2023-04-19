@@ -544,30 +544,30 @@ pub(crate) fn make_collector_for_split(
         search_request.start_timestamp,
         search_request.end_timestamp,
     );
-    let sort_order = search_request
-        .sort_order
-        .and_then(SortOrder::from_i32)
-        .unwrap_or(SortOrder::Desc);
-    let sort_by = search_request
-        .sort_by_field
-        .as_ref()
-        .map(|field_name| {
-            if field_name == "_score" {
-                SortBy::Score { order: sort_order }
-            } else {
-                SortBy::FastField {
-                    field_name: field_name.clone(),
-                    order: sort_order,
-                }
-            }
-        })
-        .unwrap_or(SortBy::DocId);
+    // let sort_order = search_request
+    //     .sort_order
+    //     .and_then(SortOrder::from_i32)
+    //     .unwrap_or(SortOrder::Desc);
+    // let sort_by = search_request
+    //     .sort_by_field
+    //     .as_ref()
+    //     .map(|field_name| {
+    //         if field_name == "_score" {
+    //             SortBy::Score { order: sort_order }
+    //         } else {
+    //             SortBy::FastField {
+    //                 field_name: field_name.clone(),
+    //                 order: sort_order,
+    //             }
+    //         }
+    //     })
+    //     .unwrap_or(SortBy::DocId);
 
     Ok(QuickwitCollector {
         split_id,
         start_offset: search_request.start_offset as usize,
         max_hits: search_request.max_hits as usize,
-        sort_by,
+        sort_by: SortBy::DocId,
         timestamp_filter_builder_opt,
         aggregation,
         aggregation_limits,

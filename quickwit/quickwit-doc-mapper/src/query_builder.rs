@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Context};
-use quickwit_proto::SearchRequest;
+use quickwit_proto::{SearchRequest, SortBy};
 use tantivy::query::{Query, QueryParser, QueryParserError as TantivyQueryParserError};
 use tantivy::query_grammar::{UserInputAst, UserInputLeaf, UserInputLiteral};
 use tantivy::schema::{Field, FieldEntry, FieldType, Schema};
@@ -55,8 +55,8 @@ pub(crate) fn build_query(
         resolve_fields(&schema, &request.search_fields)?
     };
 
-    if let Some(sort_by_field) = &request.sort_by_field {
-        validate_sort_by_field(sort_by_field, &schema, Some(&search_fields))?;
+    if let Some(sort_by) = &request.sort_by {
+        validate_sort_by(sort_by, &schema, Some(&search_fields))?;
     }
 
     let mut query_parser =
@@ -252,31 +252,31 @@ fn validate_requested_snippet_fields(
     Ok(())
 }
 
-pub(crate) fn validate_sort_by_field(
-    field_name: &str,
+pub(crate) fn validate_sort_by(
+    sort_by: &SortBy,
     schema: &Schema,
     search_fields_opt: Option<&Vec<Field>>,
 ) -> anyhow::Result<()> {
-    if field_name == "_score" {
-        return validate_sort_by_score(schema, search_fields_opt);
-    }
-    let sort_by_field = schema
-        .get_field(field_name)
-        .with_context(|| format!("Unknown sort by field: `{field_name}`"))?;
-    let sort_by_field_entry = schema.get_field_entry(sort_by_field);
+    // if field_name == "_score" {
+    //     return validate_sort_by_score(schema, search_fields_opt);
+    // }
+    // let sort_by = schema
+    //     .get_field(field_name)
+    //     .with_context(|| format!("Unknown sort by field: `{field_name}`"))?;
+    // let sort_by_entry = schema.get_field_entry(sort_by);
 
-    if matches!(sort_by_field_entry.field_type(), FieldType::Str(_)) {
-        bail!(
-            "Sort by field on type text is currently not supported `{}`.",
-            field_name
-        )
-    }
-    if !sort_by_field_entry.is_fast() {
-        bail!(
-            "Sort by field must be a fast field, please add the fast property to your field `{}`.",
-            field_name
-        )
-    }
+    // if matches!(sort_by_entry.field_type(), FieldType::Str(_)) {
+    //     bail!(
+    //         "Sort by field on type text is currently not supported `{}`.",
+    //         field_name
+    //     )
+    // }
+    // if !sort_by_entry.is_fast() {
+    //     bail!(
+    //         "Sort by field must be a fast field, please add the fast property to your field
+    // `{}`.",         field_name
+    //     )
+    // }
 
     Ok(())
 }
@@ -349,8 +349,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: None,
         };
 
         let default_field_names =
@@ -617,8 +616,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: None,
         };
         let user_input_ast = tantivy::query_grammar::parse_query(&request.query)
             .map_err(|_| QueryParserError::SyntaxError(request.query.clone()))
@@ -729,8 +727,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: None,
         };
         let request_without_set = SearchRequest {
             aggregation_request: None,
@@ -742,8 +739,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: None,
         };
 
         let default_field_names = vec!["title".to_string(), "desc".to_string()];

@@ -28,18 +28,31 @@ pub struct SearchRequest {
     /// The results with rank [start_offset..start_offset + max_hits) are returned.
     #[prost(uint64, tag = "7")]
     pub start_offset: u64,
-    /// Sort order
-    #[prost(enumeration = "SortOrder", optional, tag = "9")]
-    pub sort_order: ::core::option::Option<i32>,
-    /// Sort by fast field. If unset sort by docid
-    #[prost(string, optional, tag = "10")]
-    pub sort_by_field: ::core::option::Option<::prost::alloc::string::String>,
     /// json serialized aggregation_request
     #[prost(string, optional, tag = "11")]
     pub aggregation_request: ::core::option::Option<::prost::alloc::string::String>,
     /// Fields to extract snippet on
     #[prost(string, repeated, tag = "12")]
     pub snippet_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Optional sort by one or more fields.
+    #[prost(message, optional, tag = "13")]
+    pub sort_by: ::core::option::Option<SortBy>,
+}
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SortBy {
+    #[prost(message, repeated, tag = "1")]
+    pub sort_fields: ::prost::alloc::vec::Vec<SortField>,
+}
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SortField {
+    #[prost(string, tag = "1")]
+    pub field_name: ::prost::alloc::string::String,
+    #[prost(enumeration = "SortOrder", tag = "2")]
+    pub sort_order: i32,
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -174,11 +187,11 @@ pub struct PartialHit {
     pub sorting_field_value: u64,
     #[prost(string, tag = "2")]
     pub split_id: ::prost::alloc::string::String,
-    /// (segment_ord, doc) form a tantivy DocAddress, which is sufficient to identify a document
-    /// within a split
+    /// The pair (`segment_ord`, `doc_id`) forms a tantivy `DocAddress`, which is sufficient to identify a document
+    /// within a split.
     #[prost(uint32, tag = "3")]
     pub segment_ord: u32,
-    /// The DocId identifies a unique document at the scale of a tantivy segment.
+    /// A `DocId` identifies a unique document across tantivy segment.
     #[prost(uint32, tag = "4")]
     pub doc_id: u32,
 }

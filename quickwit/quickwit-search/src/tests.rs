@@ -24,7 +24,7 @@ use quickwit_config::SearcherConfig;
 use quickwit_doc_mapper::DefaultDocMapper;
 use quickwit_indexing::TestSandbox;
 use quickwit_opentelemetry::otlp::TraceId;
-use quickwit_proto::{LeafListTermsResponse, SearchRequest, SortOrder};
+use quickwit_proto::{LeafListTermsResponse, SearchRequest, SortBy, SortField, SortOrder};
 use serde_json::{json, Value as JsonValue};
 use tantivy::schema::Value as TantivyValue;
 use tantivy::time::OffsetDateTime;
@@ -359,6 +359,12 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
     }
     test_sandbox.add_documents(docs).await?;
 
+    let sort_by = SortBy {
+        sort_fields: vec![SortField {
+            field_name: "ts".to_string(),
+            sort_order: SortOrder::Desc as i32,
+        }],
+    };
     let search_request = SearchRequest {
         index_id: index_id.to_string(),
         query: "info".to_string(),
@@ -367,8 +373,7 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
         end_timestamp: Some(start_timestamp + 20),
         max_hits: 15,
         start_offset: 0,
-        sort_by_field: Some("ts".to_string()),
-        sort_order: Some(SortOrder::Desc as i32),
+        sort_by: Some(sort_by.clone()),
         ..Default::default()
     };
     let single_node_response = single_node_search(
@@ -391,8 +396,7 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
         end_timestamp: Some(start_timestamp + 20),
         max_hits: 25,
         start_offset: 0,
-        sort_by_field: Some("ts".to_string()),
-        sort_order: Some(SortOrder::Desc as i32),
+        sort_by: Some(sort_by.clone()),
         ..Default::default()
     };
     let single_node_response = single_node_search(
@@ -415,8 +419,7 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
         end_timestamp: None,
         max_hits: 25,
         start_offset: 0,
-        sort_by_field: Some("ts".to_string()),
-        sort_order: Some(SortOrder::Desc as i32),
+        sort_by: Some(sort_by),
         ..Default::default()
     };
     let single_node_response = single_node_search(
@@ -435,11 +438,11 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
 }
 
 async fn single_node_search_sort_by_field(
-    sort_by_field: &str,
+    sort_field_name: &str,
     fieldnorms_enabled: bool,
 ) -> anyhow::Result<()> {
     let index_id = "single-node-sorting-sort-by-".to_string()
-        + sort_by_field
+        + sort_field_name
         + "fieldnorms-"
         + &fieldnorms_enabled.to_string();
 
@@ -494,6 +497,12 @@ async fn single_node_search_sort_by_field(
     }
     test_sandbox.add_documents(docs).await?;
 
+    let sort_by = SortBy {
+        sort_fields: vec![SortField {
+            field_name: sort_field_name.to_string(),
+            sort_order: SortOrder::Desc as i32,
+        }],
+    };
     let search_request = SearchRequest {
         index_id: index_id.to_string(),
         query: "city".to_string(),
@@ -502,8 +511,7 @@ async fn single_node_search_sort_by_field(
         end_timestamp: None,
         max_hits: 15,
         start_offset: 0,
-        sort_by_field: Some(sort_by_field.to_string()),
-        sort_order: Some(SortOrder::Desc as i32),
+        sort_by: Some(sort_by),
         ..Default::default()
     };
 
@@ -576,6 +584,12 @@ async fn test_single_node_invalid_sorting_with_query() -> anyhow::Result<()> {
     }
     test_sandbox.add_documents(docs).await?;
 
+    let sort_by = SortBy {
+        sort_fields: vec![SortField {
+            field_name: "description".to_string(),
+            sort_order: SortOrder::Desc as i32,
+        }],
+    };
     let search_request = SearchRequest {
         index_id: index_id.to_string(),
         query: "city".to_string(),
@@ -584,8 +598,7 @@ async fn test_single_node_invalid_sorting_with_query() -> anyhow::Result<()> {
         end_timestamp: None,
         max_hits: 15,
         start_offset: 0,
-        sort_by_field: Some("description".to_string()),
-        sort_order: Some(SortOrder::Desc as i32),
+        sort_by: Some(sort_by),
         ..Default::default()
     };
     let single_node_response = single_node_search(
