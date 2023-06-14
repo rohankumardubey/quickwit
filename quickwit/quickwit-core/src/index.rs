@@ -29,7 +29,8 @@ use quickwit_janitor::{
     delete_splits_with_files, run_garbage_collect, SplitDeletionError, SplitRemovalInfo,
 };
 use quickwit_metastore::{
-    IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, SplitMetadata, SplitState,
+    EntityKind, IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, SplitMetadata,
+    SplitState,
 };
 use quickwit_proto::{IndexUid, ServiceError, ServiceErrorCode};
 use quickwit_storage::{StorageResolver, StorageResolverError};
@@ -100,12 +101,7 @@ impl IndexService {
         // Delete existing index if it exists.
         if overwrite {
             match self.delete_index(&index_config.index_id, false).await {
-                Ok(_)
-                | Err(IndexServiceError::MetastoreError(MetastoreError::IndexDoesNotExist {
-                    index_id: _,
-                })) => {
-                    // Ignore IndexDoesNotExist error.
-                }
+                Ok(_) | Err(IndexServiceError::MetastoreError(MetastoreError::NotFound(_))) => {}
                 Err(error) => {
                     return Err(error);
                 }
@@ -117,6 +113,9 @@ impl IndexService {
         let index_uid = self.metastore.create_index(index_config).await?;
         self.metastore
             .add_source(index_uid.clone(), SourceConfig::ingest_api_default())
+            .await?;
+        self.metastore
+            .add_source(index_uid.clone(), SourceConfig::ingester_default())
             .await?;
         self.metastore
             .add_source(index_uid, SourceConfig::cli_ingest_source())
@@ -322,9 +321,9 @@ impl IndexService {
             .sources
             .get(source_id)
             .ok_or_else(|| {
-                IndexServiceError::MetastoreError(MetastoreError::SourceDoesNotExist {
+                IndexServiceError::MetastoreError(MetastoreError::NotFound(EntityKind::Source {
                     source_id: source_id.to_string(),
-                })
+                }))
             })?
             .clone();
 

@@ -19,6 +19,7 @@
 
 use std::num::NonZeroUsize;
 use std::ops::Deref;
+use std::time::Duration;
 
 use anyhow::ensure;
 use itertools::Itertools;
@@ -171,7 +172,10 @@ impl PostgresMetastoreConfig {
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct FileMetastoreConfig;
+pub struct FileMetastoreConfig {
+    #[serde(with = "humantime_serde")]
+    pub polling_interval: Option<Duration>,
+}
 
 #[cfg(test)]
 mod tests {

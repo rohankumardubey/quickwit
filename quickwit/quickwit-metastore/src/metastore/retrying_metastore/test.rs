@@ -22,11 +22,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
+use quickwit_ingest::{
+    GetOrCreateOpenShardsRequest, GetOrCreateOpenShardsResponse, ListShardsRequest,
+    ListShardsResponse, RenewShardLeasesRequest, RenewShardLeasesResponse,
+};
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 use quickwit_proto::IndexUid;
 
 use super::retry::RetryParams;
 use crate::checkpoint::IndexCheckpointDelta;
+use crate::error::EntityKind;
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, RetryingMetastore,
     Split, SplitMetadata,
@@ -82,27 +87,16 @@ impl Metastore for RetryTestMetastore {
     }
 
     async fn create_index(&self, _index_config: IndexConfig) -> MetastoreResult<IndexUid> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(IndexUid::new("")),
-            Err(err) => Err(err),
-        }
+        self.try_success().map(|_| Default::default())
     }
 
     async fn index_metadata(&self, index_id: &str) -> MetastoreResult<IndexMetadata> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(IndexMetadata::for_test(index_id, "")),
-            Err(err) => Err(err),
-        }
+        self.try_success()
+            .map(|_| IndexMetadata::for_test(index_id, ""))
     }
 
     async fn list_indexes_metadatas(&self) -> MetastoreResult<Vec<IndexMetadata>> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(Vec::new()),
-            Err(err) => Err(err),
-        }
+        self.try_success().map(|_| Default::default())
     }
 
     async fn delete_index(&self, _index_uid: IndexUid) -> MetastoreResult<()> {
@@ -120,19 +114,16 @@ impl Metastore for RetryTestMetastore {
     async fn publish_splits<'a>(
         &self,
         _index_uid: IndexUid,
-        _split_ids: &[&'a str],
+        _staged_split_ids: &[&'a str],
         _replaced_split_ids: &[&'a str],
         _checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        _publish_token: Option<String>,
     ) -> MetastoreResult<()> {
         self.try_success()
     }
 
     async fn list_splits(&self, _query: ListSplitsQuery) -> MetastoreResult<Vec<Split>> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(Vec::new()),
-            Err(err) => Err(err),
-        }
+        self.try_success().map(|_| Default::default())
     }
 
     async fn mark_splits_for_deletion<'a>(
@@ -177,23 +168,11 @@ impl Metastore for RetryTestMetastore {
     }
 
     async fn create_delete_task(&self, _delete_query: DeleteQuery) -> MetastoreResult<DeleteTask> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(DeleteTask {
-                create_timestamp: 0,
-                opstamp: 0,
-                delete_query: None,
-            }),
-            Err(err) => Err(err),
-        }
+        self.try_success().map(|_| Default::default())
     }
 
     async fn last_delete_opstamp(&self, _index_uid: IndexUid) -> MetastoreResult<u64> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(0),
-            Err(err) => Err(err),
-        }
+        self.try_success().map(|_| Default::default())
     }
 
     async fn update_splits_delete_opstamp<'a>(
@@ -210,11 +189,31 @@ impl Metastore for RetryTestMetastore {
         _index_uid: IndexUid,
         _opstamp_start: u64,
     ) -> MetastoreResult<Vec<DeleteTask>> {
-        let result = self.try_success();
-        match result {
-            Ok(_) => Ok(Vec::new()),
-            Err(err) => Err(err),
-        }
+        self.try_success().map(|_| Default::default())
+    }
+
+    // Shard API
+    //
+
+    async fn get_or_create_open_shards(
+        &self,
+        _request: GetOrCreateOpenShardsRequest,
+    ) -> MetastoreResult<GetOrCreateOpenShardsResponse> {
+        self.try_success().map(|_| Default::default())
+    }
+
+    async fn list_shards(
+        &self,
+        _request: ListShardsRequest,
+    ) -> MetastoreResult<ListShardsResponse> {
+        self.try_success().map(|_| Default::default())
+    }
+
+    async fn renew_shard_leases(
+        &self,
+        _request: RenewShardLeasesRequest,
+    ) -> MetastoreResult<RenewShardLeasesResponse> {
+        self.try_success().map(|_| Default::default())
     }
 }
 
@@ -245,9 +244,9 @@ async fn test_retryable_metastore_errors() {
 
     let metastore: RetryingMetastore = RetryTestMetastore::new_retrying_with_errors(
         5,
-        &[MetastoreError::IndexDoesNotExist {
+        &[MetastoreError::NotFound(EntityKind::Index {
             index_id: "".to_string(),
-        }],
+        })],
     );
 
     // On non-retryable errors, RetryingMetastore should exit with an error.
@@ -288,10 +287,9 @@ async fn test_mixed_retryable_metastore_errors() {
                 message: "".to_string(),
             },
             // Non-retryable
-            MetastoreError::SourceAlreadyExists {
+            MetastoreError::NotFound(EntityKind::Source {
                 source_id: "".to_string(),
-                source_type: "".to_string(),
-            },
+            }),
             MetastoreError::InternalError {
                 message: "".to_string(),
                 cause: "".to_string(),
@@ -303,9 +301,8 @@ async fn test_mixed_retryable_metastore_errors() {
 
     assert_eq!(
         error,
-        MetastoreError::SourceAlreadyExists {
+        MetastoreError::NotFound(EntityKind::Source {
             source_id: "".to_string(),
-            source_type: "".to_string(),
-        }
+        })
     )
 }

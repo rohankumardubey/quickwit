@@ -20,6 +20,7 @@
 pub mod file_backed_metastore;
 pub mod grpc_metastore;
 pub(crate) mod index_metadata;
+mod ingest;
 mod instrumented_metastore;
 pub mod metastore_event_publisher;
 #[cfg(feature = "postgres")]
@@ -32,14 +33,20 @@ use std::ops::{Bound, RangeInclusive};
 
 use async_trait::async_trait;
 pub use index_metadata::IndexMetadata;
+pub use ingest::IngestMetastoreAdapter;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
+use quickwit_ingest::{
+    GetOrCreateOpenShardsRequest, GetOrCreateOpenShardsResponse, ListShardsRequest,
+    ListShardsResponse, RenewShardLeasesRequest, RenewShardLeasesResponse,
+};
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 use quickwit_proto::IndexUid;
 use time::OffsetDateTime;
 
 use crate::checkpoint::IndexCheckpointDelta;
+use crate::error::EntityKind;
 use crate::{MetastoreError, MetastoreResult, Split, SplitMetadata, SplitState};
 
 /// Metastore meant to manage Quickwit's indexes, their splits and delete tasks.
@@ -109,7 +116,7 @@ pub trait Metastore: Send + Sync + 'static {
     async fn index_exists(&self, index_id: &str) -> MetastoreResult<bool> {
         match self.index_metadata(index_id).await {
             Ok(_) => Ok(true),
-            Err(MetastoreError::IndexDoesNotExist { .. }) => Ok(false),
+            Err(MetastoreError::NotFound { .. }) => Ok(false),
             Err(error) => Err(error),
         }
     }
@@ -129,9 +136,9 @@ pub trait Metastore: Send + Sync + 'static {
         let index_metadata = self.index_metadata(index_uid.index_id()).await?;
 
         if index_metadata.index_uid != *index_uid {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         Ok(index_metadata)
     }
@@ -182,6 +189,7 @@ pub trait Metastore: Send + Sync + 'static {
         staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        publish_token: Option<String>,
     ) -> MetastoreResult<()>;
 
     /// Lists the splits.
@@ -307,6 +315,23 @@ pub trait Metastore: Send + Sync + 'static {
         index_uid: IndexUid,
         opstamp_start: u64,
     ) -> MetastoreResult<Vec<DeleteTask>>;
+
+    // Shard API
+
+    /// Gets...
+    async fn get_or_create_open_shards(
+        &self,
+        request: GetOrCreateOpenShardsRequest,
+    ) -> MetastoreResult<GetOrCreateOpenShardsResponse>;
+
+    /// Lists...
+    async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse>;
+
+    /// Renews...
+    async fn renew_shard_leases(
+        &self,
+        request: RenewShardLeasesRequest,
+    ) -> MetastoreResult<RenewShardLeasesResponse>;
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -58,7 +58,7 @@ impl fmt::Debug for IndexedSplit {
         formatter
             .debug_struct("IndexedSplit")
             .field("split_id", &self.split_attrs.split_id)
-            .field("dir", &self.split_scratch_directory.path())
+            .field("scratch_dir", &self.split_scratch_directory.path())
             .field("num_docs", &self.split_attrs.num_docs)
             .finish()
     }
@@ -69,7 +69,7 @@ impl fmt::Debug for IndexedSplitBuilder {
         formatter
             .debug_struct("IndexedSplitBuilder")
             .field("split_id", &self.split_attrs.split_id)
-            .field("dir", &self.split_scratch_directory.path())
+            .field("scratch_dir", &self.split_scratch_directory.path())
             .field("num_docs", &self.split_attrs.num_docs)
             .finish()
     }
@@ -152,15 +152,16 @@ impl IndexedSplitBuilder {
 
 #[derive(Debug)]
 pub struct IndexedSplitBatch {
-    pub batch_parent_span: Span,
     pub splits: Vec<IndexedSplit>,
     pub checkpoint_delta: Option<IndexCheckpointDelta>,
     pub publish_lock: PublishLock,
+    pub publish_token: Option<String>,
     /// A [`MergeOperation`] tracked by either the `MergePlanner` or the `DeleteTaskPlanner`
     /// in the `MergePipeline` or `DeleteTaskPipeline`.
     /// See planners docs to understand the usage.
     /// If `None`, the split batch was built in the `IndexingPipeline`.
     pub merge_operation: Option<TrackedObject<MergeOperation>>,
+    pub batch_parent_span: Span,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,18 +176,20 @@ pub enum CommitTrigger {
 
 #[derive(Debug)]
 pub struct IndexedSplitBatchBuilder {
-    pub batch_parent_span: Span,
     pub splits: Vec<IndexedSplitBuilder>,
     pub checkpoint_delta: Option<IndexCheckpointDelta>,
     pub publish_lock: PublishLock,
+    pub publish_token: Option<String>,
     pub commit_trigger: CommitTrigger,
+    pub batch_parent_span: Span,
 }
 
 /// Sends notifications to the Publisher that the last batch of splits was emtpy.
 #[derive(Debug)]
 pub struct EmptySplit {
     pub index_uid: IndexUid,
-    pub batch_parent_span: Span,
     pub checkpoint_delta: IndexCheckpointDelta,
     pub publish_lock: PublishLock,
+    pub publish_token: Option<String>,
+    pub batch_parent_span: Span,
 }

@@ -33,6 +33,7 @@ members = [
   "quickwit-serve",
   "quickwit-storage",
   "quickwit-telemetry",
+  "quickwit-types",
 ]
 
 [profile.dev]
@@ -74,6 +75,7 @@ http = "0.2.9"
 http-serde = "1.1.2"
 humansize = "2.1.3"
 humantime = "2.1.0"
+humantime-serde = "1.1.1"
 hyper = { version = "0.14", features = [
   "client",
   "http1",
@@ -223,6 +225,7 @@ quickwit-search = { version = "0.6.2", path = "./quickwit-search" }
 quickwit-serve = { version = "0.6.2", path = "./quickwit-serve" }
 quickwit-storage = { version = "0.6.2", path = "./quickwit-storage" }
 quickwit-telemetry = { version = "0.6.2", path = "./quickwit-telemetry" }
+quickwit-types = { version = "0.6.2", path = "./quickwit-types" }
 
 tantivy = { git = "https://github.com/quickwit-oss/tantivy/", rev = "3c30066", default-features = false, features = [
   "mmap",

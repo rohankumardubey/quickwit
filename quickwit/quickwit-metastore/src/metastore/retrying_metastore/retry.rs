@@ -76,7 +76,8 @@ where
                 }
                 if attempt_count >= retry_params.max_attempts {
                     warn!(
-                        attempt_count = %attempt_count,
+                        attempt_count=%attempt_count,
+                        error=?error,
                         "Request failed"
                     );
                     return Err(error);
@@ -87,9 +88,9 @@ where
                 .min(retry_params.max_delay.as_millis() as u64);
                 let delay_ms = rand::thread_rng().gen_range(0..ceiling_ms);
                 debug!(
-                    attempt_count = %attempt_count,
-                    delay_ms = %delay_ms,
-                    error = ?error,
+                    attempt_count=%attempt_count,
+                    delay_ms=%delay_ms,
+                    error=?error,
                     "Request failed, retrying"
                 );
 

@@ -17,6 +17,7 @@ chrono = { workspace = true }
 cron = { workspace = true }
 enum-iterator = { workspace = true }
 humantime = { workspace = true }
+humantime-serde = { workspace = true }
 itertools = { workspace = true }
 json_comments = { workspace = true }
 new_string_template = { workspace = true }

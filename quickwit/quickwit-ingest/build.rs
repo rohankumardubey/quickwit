@@ -29,4 +29,20 @@ fn main() {
         &[],
     )
     .unwrap();
+
+    Codegen::run(
+        &[
+            "src/ingest_v2/proto/ingest.proto",
+            "src/ingest_v2/proto/ingest_metastore.proto",
+            "src/ingest_v2/proto/ingester.proto",
+            "src/ingest_v2/proto/router.proto",
+            "src/ingest_v2/proto/shard.proto",
+        ],
+        "src/ingest_v2/codegen",
+        "crate::ingest_v2::Result",
+        "crate::ingest_v2::IngestErrorV2",
+        &["DocBatchV2.doc_buffer"],
+        &["src/ingest_v2/proto"],
+    )
+    .unwrap();
 }

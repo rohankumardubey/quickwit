@@ -39,6 +39,7 @@ pub mod test_suite {
     use crate::checkpoint::{
         IndexCheckpointDelta, PartitionId, Position, SourceCheckpoint, SourceCheckpointDelta,
     };
+    use crate::error::EntityKind;
     use crate::{
         ListSplitsQuery, Metastore, MetastoreError, Split, SplitMaturity, SplitMetadata, SplitState,
     };
@@ -109,7 +110,7 @@ pub mod test_suite {
         assert_eq!(index_metadata.index_uri(), &index_uri);
 
         let error = metastore.create_index(index_config).await.unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexAlreadyExists { .. }));
+        assert!(matches!(error, MetastoreError::AlreadyExists { .. }));
 
         cleanup_index(&metastore, index_uid).await;
     }
@@ -160,7 +161,7 @@ pub mod test_suite {
             .index_metadata("index-not-found")
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         let index_uid = metastore.create_index(index_config.clone()).await.unwrap();
 
@@ -220,13 +221,13 @@ pub mod test_suite {
             .delete_index(IndexUid::new("index-not-found"))
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         let error = metastore
             .delete_index(IndexUid::new("test-delete-index"))
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         let index_uid = metastore.create_index(index_config.clone()).await.unwrap();
 
@@ -311,21 +312,21 @@ pub mod test_suite {
                 .add_source(index_uid.clone(), source.clone())
                 .await
                 .unwrap_err(),
-            MetastoreError::SourceAlreadyExists { .. }
+            MetastoreError::AlreadyExists(EntityKind::Source { .. })
         ));
         assert!(matches!(
             metastore
                 .add_source(IndexUid::new("index-not-found"), source.clone())
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
         assert!(matches!(
             metastore
                 .add_source(IndexUid::new(index_id), source)
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
         cleanup_index(&metastore, index_uid).await;
     }
@@ -403,14 +404,14 @@ pub mod test_suite {
                 .add_source(IndexUid::new("index-not-found"), source.clone())
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
         assert!(matches!(
             metastore
                 .add_source(IndexUid::new(&index_id), source.clone())
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
 
         metastore
@@ -430,21 +431,21 @@ pub mod test_suite {
                 .delete_source(index_uid.clone(), &source_id)
                 .await
                 .unwrap_err(),
-            MetastoreError::SourceDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
         assert!(matches!(
             metastore
                 .delete_source(IndexUid::new("index-not-found"), &source_id)
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
         assert!(matches!(
             metastore
                 .delete_source(IndexUid::new(index_id), &source_id)
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
 
         cleanup_index(&metastore, index_uid).await;
@@ -487,7 +488,7 @@ pub mod test_suite {
                 .await
                 .unwrap();
             metastore
-                .publish_splits(index_uid.clone(), &[split_id], &[], None)
+                .publish_splits(index_uid.clone(), &[split_id], &[], None, None)
                 .await
                 .unwrap();
         }
@@ -519,7 +520,7 @@ pub mod test_suite {
                 .reset_source_checkpoint(IndexUid::new("index-not-found"), &source_ids[1])
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
 
         assert!(matches!(
@@ -527,7 +528,7 @@ pub mod test_suite {
                 .reset_source_checkpoint(IndexUid::new(&index_id), &source_ids[1])
                 .await
                 .unwrap_err(),
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound(_)
         ));
 
         metastore
@@ -567,10 +568,11 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
         }
 
         // Update the checkpoint, by publishing an empty array of splits with a non-empty
@@ -589,6 +591,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -651,10 +654,11 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
         }
 
         // Publish a split on a wrong index uid
@@ -669,10 +673,11 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
         }
 
         // Publish a non-existent split on an index
@@ -680,10 +685,10 @@ pub mod test_suite {
             let index_uid = metastore.create_index(index_config.clone()).await.unwrap();
 
             let error = metastore
-                .publish_splits(index_uid.clone(), &["split-not-found"], &[], None)
+                .publish_splits(index_uid.clone(), &["split-not-found"], &[], None, None)
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -698,7 +703,7 @@ pub mod test_suite {
                 .unwrap();
 
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None)
+                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None, None)
                 .await
                 .unwrap();
 
@@ -724,6 +729,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -738,6 +744,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
@@ -768,6 +775,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -787,6 +795,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
@@ -814,10 +823,11 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -841,6 +851,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -855,10 +866,11 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -882,6 +894,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -901,10 +914,11 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -933,6 +947,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -962,6 +977,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -976,6 +992,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
@@ -1006,6 +1023,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1020,6 +1038,7 @@ pub mod test_suite {
                         IndexCheckpointDelta::for_test(&source_id, offsets)
                     }
                     .into(),
+                    None,
                 )
                 .await
                 .unwrap_err();
@@ -1081,6 +1100,7 @@ pub mod test_suite {
                             &[&split_id],
                             &[],
                             Some(checkpoint_delta),
+                            None,
                         )
                         .await
                         .unwrap();
@@ -1146,10 +1166,11 @@ pub mod test_suite {
                     &["split-not-found-1"],
                     &["split-not-found-2"],
                     None,
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
         }
 
         // Replace a non-existent split on an index
@@ -1163,10 +1184,11 @@ pub mod test_suite {
                     &["split-not-found-1"],
                     &["split-not-found-2"],
                     None,
+                    None,
                 )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -1181,16 +1203,22 @@ pub mod test_suite {
                 .unwrap();
 
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None)
+                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None, None)
                 .await
                 .unwrap();
 
             // TODO Source id
             let error = metastore
-                .publish_splits(index_uid.clone(), &[&split_id_2], &[&split_id_1], None)
+                .publish_splits(
+                    index_uid.clone(),
+                    &[&split_id_2],
+                    &[&split_id_1],
+                    None,
+                    None,
+                )
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -1208,7 +1236,13 @@ pub mod test_suite {
                 .unwrap();
 
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1, &split_id_2], &[], None)
+                .publish_splits(
+                    index_uid.clone(),
+                    &[&split_id_1, &split_id_2],
+                    &[],
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
 
@@ -1219,7 +1253,13 @@ pub mod test_suite {
 
             // TODO source_id
             let error = metastore
-                .publish_splits(index_uid.clone(), &[&split_id_2], &[&split_id_1], None)
+                .publish_splits(
+                    index_uid.clone(),
+                    &[&split_id_2],
+                    &[&split_id_1],
+                    None,
+                    None,
+                )
                 .await
                 .unwrap_err();
             assert!(matches!(error, MetastoreError::SplitsNotStaged { .. }));
@@ -1237,7 +1277,7 @@ pub mod test_suite {
                 .unwrap();
 
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None)
+                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None, None)
                 .await
                 .unwrap();
 
@@ -1252,10 +1292,11 @@ pub mod test_suite {
                     &[&split_id_2, &split_id_3],
                     &[&split_id_1],
                     None,
+                    None,
                 ) // TODO source id
                 .await
                 .unwrap_err();
-            assert!(matches!(error, MetastoreError::SplitsDoNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
 
             cleanup_index(&metastore, index_uid).await;
         }
@@ -1270,7 +1311,7 @@ pub mod test_suite {
                 .unwrap();
 
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None)
+                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None, None)
                 .await
                 .unwrap();
 
@@ -1285,7 +1326,13 @@ pub mod test_suite {
                 .unwrap();
 
             let error = metastore
-                .publish_splits(index_uid.clone(), &[&split_id_2], &[&split_id_1], None)
+                .publish_splits(
+                    index_uid.clone(),
+                    &[&split_id_2],
+                    &[&split_id_1],
+                    None,
+                    None,
+                )
                 .await
                 .unwrap_err();
             assert!(
@@ -1305,7 +1352,7 @@ pub mod test_suite {
                 .unwrap();
 
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None)
+                .publish_splits(index_uid.clone(), &[&split_id_1], &[], None, None)
                 .await
                 .unwrap();
 
@@ -1323,6 +1370,7 @@ pub mod test_suite {
                     index_uid.clone(),
                     &[&split_id_2, &split_id_3],
                     &[&split_id_1],
+                    None,
                     None,
                 )
                 .await
@@ -1349,7 +1397,7 @@ pub mod test_suite {
             .mark_splits_for_deletion(IndexUid::new("index-not-found"), &[])
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         metastore
             .mark_splits_for_deletion(index_uid.clone(), &["split-not-found"])
@@ -1380,7 +1428,7 @@ pub mod test_suite {
             .await
             .unwrap();
         metastore
-            .publish_splits(index_uid.clone(), &[&split_id_2], &[], None)
+            .publish_splits(index_uid.clone(), &[&split_id_2], &[], None, None)
             .await
             .unwrap();
 
@@ -1396,7 +1444,7 @@ pub mod test_suite {
             .await
             .unwrap();
         metastore
-            .publish_splits(index_uid.clone(), &[&split_id_3], &[], None)
+            .publish_splits(index_uid.clone(), &[&split_id_3], &[], None, None)
             .await
             .unwrap();
 
@@ -1471,14 +1519,14 @@ pub mod test_suite {
             .await
             .unwrap_err();
 
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         let error = metastore
             .delete_splits(IndexUid::new(&index_id), &[])
             .await
             .unwrap_err();
 
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         metastore
             .delete_splits(index_uid.clone(), &["split-not-found"])
@@ -1496,7 +1544,7 @@ pub mod test_suite {
             .await
             .unwrap();
         metastore
-            .publish_splits(index_uid.clone(), &[&split_id_1], &[], None)
+            .publish_splits(index_uid.clone(), &[&split_id_1], &[], None, None)
             .await
             .unwrap();
 
@@ -1601,7 +1649,7 @@ pub mod test_suite {
             .list_all_splits(IndexUid::new("index-not-found"))
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         let index_uid = metastore.create_index(index_config).await.unwrap();
 
@@ -1621,7 +1669,13 @@ pub mod test_suite {
             .unwrap();
 
         metastore
-            .publish_splits(index_uid.clone(), &[&split_id_1, &split_id_2], &[], None)
+            .publish_splits(
+                index_uid.clone(),
+                &[&split_id_1, &split_id_2],
+                &[],
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1724,7 +1778,7 @@ pub mod test_suite {
             let query =
                 ListSplitsQuery::for_index(index_uid.clone()).with_split_state(SplitState::Staged);
             let error = metastore.list_splits(query).await.unwrap_err();
-            assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+            assert!(matches!(error, MetastoreError::NotFound(_)));
         }
         {
             let index_uid = metastore.create_index(index_config.clone()).await.unwrap();
@@ -2153,6 +2207,7 @@ pub mod test_suite {
                     IndexCheckpointDelta::for_test(&source_id, offsets)
                 }
                 .into(),
+                None,
             )
             .await
             .unwrap();
@@ -2198,7 +2253,7 @@ pub mod test_suite {
             })
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         // Create a delete task on an index with wrong incarnation_id
         let error = metastore
@@ -2208,7 +2263,7 @@ pub mod test_suite {
             })
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         // Create a delete task.
         let delete_task_1 = metastore
@@ -2438,7 +2493,7 @@ pub mod test_suite {
             .list_stale_splits(IndexUid::new("index-not-found"), 0, 10)
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         {
             info!("List stale splits on an index");
@@ -2465,7 +2520,7 @@ pub mod test_suite {
                 .await
                 .unwrap();
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_4], &[], None)
+                .publish_splits(index_uid.clone(), &[&split_id_4], &[], None, None)
                 .await
                 .unwrap();
             // Sleep for 1 second to have different publish timestamps.
@@ -2475,6 +2530,7 @@ pub mod test_suite {
                     index_uid.clone(),
                     &[&split_id_1, &split_id_2, &split_id_5],
                     &[],
+                    None,
                     None,
                 )
                 .await
@@ -2563,10 +2619,7 @@ pub mod test_suite {
                 .await
                 .unwrap_err();
             error!(err=?metastore_err);
-            assert!(matches!(
-                metastore_err,
-                MetastoreError::IndexDoesNotExist { .. }
-            ));
+            assert!(matches!(metastore_err, MetastoreError::NotFound(_)));
         }
 
         {
@@ -2585,7 +2638,13 @@ pub mod test_suite {
                 .await
                 .unwrap();
             metastore
-                .publish_splits(index_uid.clone(), &[&split_id_1, &split_id_2], &[], None)
+                .publish_splits(
+                    index_uid.clone(),
+                    &[&split_id_1, &split_id_2],
+                    &[],
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
 
@@ -2651,7 +2710,7 @@ pub mod test_suite {
             )
             .await
             .unwrap_err();
-        assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
+        assert!(matches!(error, MetastoreError::NotFound(_)));
 
         let index_uid = metastore.create_index(index_config.clone()).await.unwrap();
 
@@ -2677,7 +2736,13 @@ pub mod test_suite {
             .expect("Pre-existing staged splits should be updated.");
 
         metastore
-            .publish_splits(index_uid.clone(), &[&split_id_1, &split_id_2], &[], None)
+            .publish_splits(
+                index_uid.clone(),
+                &[&split_id_1, &split_id_2],
+                &[],
+                None,
+                None,
+            )
             .await
             .unwrap();
         let err = metastore

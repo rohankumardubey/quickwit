@@ -30,7 +30,7 @@ use quickwit_config::{
 use quickwit_core::{IndexService, IndexServiceError};
 use quickwit_doc_mapper::{analyze_text, TokenizerConfig};
 use quickwit_metastore::{
-    IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, Split, SplitState,
+    EntityKind, IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, Split, SplitState,
 };
 use quickwit_proto::IndexUid;
 use serde::de::DeserializeOwned;
@@ -585,8 +585,10 @@ async fn get_source(
         .await?
         .sources
         .get(&source_id)
-        .ok_or_else(|| MetastoreError::SourceDoesNotExist {
-            source_id: source_id.to_string(),
+        .ok_or_else(|| {
+            MetastoreError::NotFound(EntityKind::Source {
+                source_id: source_id.to_string(),
+            })
         })?
         .clone();
     Ok(source_config)
@@ -1550,9 +1552,9 @@ mod tests {
             .expect_delete_source()
             .return_once(|index_uid, source_id| {
                 assert_eq!(index_uid.index_id(), "quickwit-demo-index");
-                Err(MetastoreError::SourceDoesNotExist {
+                Err(MetastoreError::NotFound(EntityKind::Source {
                     source_id: source_id.to_string(),
-                })
+                }))
             });
         let index_service = IndexService::new(Arc::new(metastore), StorageResolver::unconfigured());
         let index_management_handler = super::index_management_handlers(

@@ -15,10 +15,13 @@ flume = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 hyper = { workspace = true }
+itertools = { workspace = true }
 mockall = { workspace = true, optional = true }
 mrecordlog = { workspace = true }
 once_cell = { workspace = true }
 prost = { workspace = true }
+prost-types = { workspace = true }
+siphasher = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -33,6 +36,7 @@ quickwit-actors = { workspace = true }
 quickwit-common = { workspace = true }
 quickwit-config = { workspace = true }
 quickwit-proto = { workspace = true }
+quickwit-types = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
@@ -41,6 +45,7 @@ rand_distr = { workspace = true }
 tempfile = { workspace = true }
 
 quickwit-actors = { workspace = true, features = ["testsuite"] }
+quickwit-common = { workspace = true, features = ["testsuite"] }
 
 [build-dependencies]
 quickwit-codegen = { workspace = true }

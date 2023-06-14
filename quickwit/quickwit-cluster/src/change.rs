@@ -140,7 +140,7 @@ async fn compute_cluster_change_events_on_added(
     previous_nodes.insert(new_chitchat_id.clone(), new_node.clone());
 
     if new_node.is_ready() {
-        warmup_channel(new_node.channel()).await;
+        // warmup_channel(new_node.channel()).await;
 
         if !is_self_node {
             info!(

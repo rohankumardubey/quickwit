@@ -27,6 +27,7 @@ pub struct RawDocBatch {
     pub docs: Vec<Bytes>,
     pub checkpoint_delta: SourceCheckpointDelta,
     pub force_commit: bool,
+    pub lessee_id: Option<String>,
 }
 
 impl RawDocBatch {
@@ -39,6 +40,7 @@ impl RawDocBatch {
             docs,
             checkpoint_delta,
             force_commit,
+            lessee_id: None,
         }
     }
 
@@ -47,6 +49,7 @@ impl RawDocBatch {
             docs: Vec::with_capacity(capacity),
             checkpoint_delta: SourceCheckpointDelta::default(),
             force_commit: false,
+            lessee_id: None,
         }
     }
 
@@ -66,6 +69,7 @@ impl RawDocBatch {
             docs,
             checkpoint_delta,
             force_commit: false,
+            lessee_id: None,
         }
     }
 }

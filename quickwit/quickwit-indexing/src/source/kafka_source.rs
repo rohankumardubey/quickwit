@@ -49,7 +49,7 @@ use tracing::{debug, info, warn};
 
 use crate::actors::DocProcessor;
 use crate::models::{NewPublishLock, PublishLock, RawDocBatch};
-use crate::source::{Source, SourceContext, SourceExecutionContext, TypedSourceFactory};
+use crate::source::{BatchBuilder, Source, SourceContext, SourceRuntimeArgs, TypedSourceFactory};
 
 /// Number of bytes after which we cut a new batch.
 ///
@@ -73,7 +73,7 @@ impl TypedSourceFactory for KafkaSourceFactory {
     type Params = KafkaSourceParams;
 
     async fn typed_create_source(
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         params: KafkaSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self::Source> {
@@ -216,7 +216,7 @@ pub struct KafkaSourceState {
 
 /// A `KafkaSource` consumes a topic and forwards its messages to an `Indexer`.
 pub struct KafkaSource {
-    ctx: Arc<SourceExecutionContext>,
+    ctx: Arc<SourceRuntimeArgs>,
     topic: String,
     state: KafkaSourceState,
     backfill_mode_enabled: bool,
@@ -239,7 +239,7 @@ impl fmt::Debug for KafkaSource {
 impl KafkaSource {
     /// Instantiates a new `KafkaSource`.
     pub async fn try_new(
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         params: KafkaSourceParams,
         _ignored_checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self> {
@@ -292,7 +292,7 @@ impl KafkaSource {
         })
     }
 
-    async fn process_message(
+    fn process_message(
         &mut self,
         message: KafkaMessage,
         batch: &mut BatchBuilder,
@@ -306,7 +306,7 @@ impl KafkaSource {
         } = message;
 
         if let Some(doc) = doc_opt {
-            batch.push(doc, payload_len);
+            batch.add_doc(doc);
         } else {
             self.state.num_invalid_messages += 1;
         }
@@ -317,8 +317,8 @@ impl KafkaSource {
             .state
             .assigned_partitions
             .get(&partition)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
+            .with_context(|| {
+                format!(
                     "Received message from unassigned partition `{}`. Assigned partitions: \
                      `{{{}}}`.",
                     partition,
@@ -446,34 +446,6 @@ impl KafkaSource {
     }
 }
 
-#[derive(Debug, Default)]
-struct BatchBuilder {
-    docs: Vec<Bytes>,
-    num_bytes: u64,
-    checkpoint_delta: SourceCheckpointDelta,
-}
-
-impl BatchBuilder {
-    fn build(self) -> RawDocBatch {
-        RawDocBatch {
-            docs: self.docs,
-            checkpoint_delta: self.checkpoint_delta,
-            force_commit: false,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.docs.clear();
-        self.num_bytes = 0;
-        self.checkpoint_delta = SourceCheckpointDelta::default();
-    }
-
-    fn push(&mut self, doc: Bytes, num_bytes: u64) {
-        self.docs.push(doc);
-        self.num_bytes += num_bytes;
-    }
-}
-
 #[async_trait]
 impl Source for KafkaSource {
     async fn initialize(
@@ -493,7 +465,7 @@ impl Source for KafkaSource {
         ctx: &SourceContext,
     ) -> Result<Duration, ActorExitStatus> {
         let now = Instant::now();
-        let mut batch = BatchBuilder::default();
+        let mut batch_builder = BatchBuilder::default();
         let deadline = time::sleep(*quickwit_actors::HEARTBEAT / 2);
         tokio::pin!(deadline);
 
@@ -502,13 +474,13 @@ impl Source for KafkaSource {
                 event_opt = self.events_rx.recv() => {
                     let event = event_opt.ok_or_else(|| ActorExitStatus::from(anyhow!("Consumer was dropped.")))?;
                     match event {
-                        KafkaEvent::Message(message) => self.process_message(message, &mut batch).await?,
+                        KafkaEvent::Message(message) => self.process_message(message, &mut batch_builder)?,
                         KafkaEvent::AssignPartitions { partitions, assignment_tx} => self.process_assign_partitions(ctx, &partitions, assignment_tx).await?,
-                        KafkaEvent::RevokePartitions { ack_tx } => self.process_revoke_partitions(ctx, doc_processor_mailbox, &mut batch, ack_tx).await?,
+                        KafkaEvent::RevokePartitions { ack_tx } => self.process_revoke_partitions(ctx, doc_processor_mailbox, &mut batch_builder, ack_tx).await?,
                         KafkaEvent::PartitionEOF(partition) => self.process_partition_eof(partition),
                         KafkaEvent::Error(error) => Err(ActorExitStatus::from(error))?,
                     }
-                    if batch.num_bytes >= BATCH_NUM_BYTES_LIMIT {
+                    if batch_builder.num_bytes >= BATCH_NUM_BYTES_LIMIT {
                         break;
                     }
                 }
@@ -518,13 +490,13 @@ impl Source for KafkaSource {
             }
             ctx.record_progress();
         }
-        if !batch.checkpoint_delta.is_empty() {
+        if !batch_builder.checkpoint_delta.is_empty() {
             debug!(
-                num_docs=%batch.docs.len(),
-                num_bytes=%batch.num_bytes,
+                num_docs=%batch_builder.docs.len(),
+                num_bytes=%batch_builder.num_bytes,
                 num_millis=%now.elapsed().as_millis(),
                 "Sending doc batch to indexer.");
-            let message = batch.build();
+            let message = batch_builder.build();
             ctx.send_message(doc_processor_mailbox, message).await?;
         }
         if self.should_exit() {
@@ -962,7 +934,7 @@ mod kafka_broker_tests {
         } else {
             unreachable!()
         };
-        let ctx = SourceExecutionContext::for_test(
+        let ctx = SourceRuntimeArgs::for_test(
             metastore,
             index_uid,
             PathBuf::from("./queues"),
@@ -990,10 +962,7 @@ mod kafka_broker_tests {
             partition: 1,
             offset: 0,
         };
-        kafka_source
-            .process_message(message, &mut batch)
-            .await
-            .unwrap();
+        kafka_source.process_message(message, &mut batch).unwrap();
 
         assert_eq!(batch.docs.len(), 0);
         assert_eq!(batch.num_bytes, 0);
@@ -1011,10 +980,7 @@ mod kafka_broker_tests {
             partition: 1,
             offset: 1,
         };
-        kafka_source
-            .process_message(message, &mut batch)
-            .await
-            .unwrap();
+        kafka_source.process_message(message, &mut batch).unwrap();
 
         assert_eq!(batch.docs.len(), 1);
         assert_eq!(batch.docs[0], "test-doc");
@@ -1033,10 +999,7 @@ mod kafka_broker_tests {
             partition: 2,
             offset: 42,
         };
-        kafka_source
-            .process_message(message, &mut batch)
-            .await
-            .unwrap();
+        kafka_source.process_message(message, &mut batch).unwrap();
 
         assert_eq!(batch.docs.len(), 2);
         assert_eq!(batch.docs[1], "test-doc");
@@ -1067,7 +1030,6 @@ mod kafka_broker_tests {
         };
         kafka_source
             .process_message(message, &mut batch)
-            .await
             .unwrap_err();
     }
 
@@ -1088,7 +1050,7 @@ mod kafka_broker_tests {
         } else {
             unreachable!()
         };
-        let ctx = Arc::new(SourceExecutionContext {
+        let ctx = Arc::new(SourceRuntimeArgs {
             metastore,
             index_uid,
             queues_dir_path: PathBuf::from("./queues"),
@@ -1149,7 +1111,7 @@ mod kafka_broker_tests {
         } else {
             unreachable!()
         };
-        let ctx = SourceExecutionContext::for_test(
+        let ctx = SourceRuntimeArgs::for_test(
             metastore,
             index_uid,
             PathBuf::from("./queues"),
@@ -1169,7 +1131,7 @@ mod kafka_broker_tests {
         let (ack_tx, ack_rx) = oneshot::channel();
 
         let mut batch = BatchBuilder::default();
-        batch.push(Bytes::from_static(b"test-doc"), 8);
+        batch.add_doc(Bytes::from_static(b"test-doc"), 8);
 
         let publish_lock = kafka_source.publish_lock.clone();
         assert!(publish_lock.is_alive());
@@ -1206,7 +1168,7 @@ mod kafka_broker_tests {
         } else {
             unreachable!()
         };
-        let ctx = SourceExecutionContext::for_test(
+        let ctx = SourceRuntimeArgs::for_test(
             metastore,
             index_uid,
             PathBuf::from("./queues"),
@@ -1244,7 +1206,7 @@ mod kafka_broker_tests {
             let index_uid = setup_index(metastore.clone(), &index_id, &source_id, &[]).await;
             let source = source_loader
                 .load_source(
-                    SourceExecutionContext::for_test(
+                    SourceRuntimeArgs::for_test(
                         metastore,
                         index_uid,
                         PathBuf::from("./queues"),
@@ -1303,7 +1265,7 @@ mod kafka_broker_tests {
             let index_uid = setup_index(metastore.clone(), &index_id, &source_id, &[]).await;
             let source = source_loader
                 .load_source(
-                    Arc::new(SourceExecutionContext {
+                    Arc::new(SourceRuntimeArgs {
                         metastore,
                         index_uid,
                         queues_dir_path: PathBuf::from("./queues"),
@@ -1372,7 +1334,7 @@ mod kafka_broker_tests {
             .await;
             let source = source_loader
                 .load_source(
-                    Arc::new(SourceExecutionContext {
+                    Arc::new(SourceRuntimeArgs {
                         metastore,
                         index_uid,
                         queues_dir_path: PathBuf::from("./queues"),

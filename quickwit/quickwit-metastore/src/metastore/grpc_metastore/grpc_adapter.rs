@@ -20,7 +20,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use itertools::Itertools;
 use quickwit_config::IndexConfig;
 use quickwit_proto::metastore_api::metastore_api_service_server::{self as grpc};
 use quickwit_proto::metastore_api::{
@@ -205,16 +204,17 @@ impl grpc::MetastoreApiService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<SplitResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let publish_request = request.into_inner();
-        let split_ids = publish_request
-            .split_ids
+        let index_uid = publish_request.index_uid.into();
+        let staged_split_ids: Vec<&str> = publish_request
+            .staged_split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
-        let replaced_split_ids = publish_request
+            .collect();
+        let replaced_split_ids: Vec<&str> = publish_request
             .replaced_split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let checkpoint_delta_opt = publish_request
             .index_checkpoint_delta_serialized_json
             .map(|json| serde_json::from_str(&json))
@@ -223,13 +223,15 @@ impl grpc::MetastoreApiService for GrpcMetastoreAdapter {
                 struct_name: "IndexCheckpointDelta".to_string(),
                 message: error.to_string(),
             })?;
+        let publish_token = publish_request.publish_token;
         let publish_splits_reply = self
             .0
             .publish_splits(
-                publish_request.index_uid.into(),
-                &split_ids,
+                index_uid,
+                &staged_split_ids,
                 &replaced_split_ids,
                 checkpoint_delta_opt,
+                publish_token,
             )
             .await
             .map(|_| SplitResponse {})?;
@@ -243,11 +245,11 @@ impl grpc::MetastoreApiService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<SplitResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let mark_splits_for_deletion_request = request.into_inner();
-        let split_ids = mark_splits_for_deletion_request
+        let split_ids: Vec<&str> = mark_splits_for_deletion_request
             .split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let mark_splits_for_deletion_reply = self
             .0
             .mark_splits_for_deletion(
@@ -266,11 +268,11 @@ impl grpc::MetastoreApiService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<SplitResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let delete_splits_request = request.into_inner();
-        let split_ids = delete_splits_request
+        let split_ids: Vec<&str> = delete_splits_request
             .split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let delete_splits_reply = self
             .0
             .delete_splits(delete_splits_request.index_uid.into(), &split_ids)
@@ -383,11 +385,11 @@ impl grpc::MetastoreApiService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<UpdateSplitsDeleteOpstampResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let request = request.into_inner();
-        let split_ids = request
+        let split_ids: Vec<&str> = request
             .split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let reply = self
             .0
             .update_splits_delete_opstamp(
@@ -413,7 +415,7 @@ impl grpc::MetastoreApiService for GrpcMetastoreAdapter {
             .await?
             .into_iter()
             .map(DeleteTask::from)
-            .collect_vec();
+            .collect();
         let reply = ListDeleteTasksResponse { delete_tasks };
         Ok(tonic::Response::new(reply))
     }

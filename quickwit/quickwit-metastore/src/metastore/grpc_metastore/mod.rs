@@ -29,6 +29,11 @@ use itertools::Itertools;
 use quickwit_common::tower::BalanceChannel;
 use quickwit_common::uri::Uri as QuickwitUri;
 use quickwit_config::{IndexConfig, SourceConfig};
+use quickwit_ingest::ingest_metastore_service_grpc_client::IngestMetastoreServiceGrpcClient;
+use quickwit_ingest::{
+    GetOrCreateOpenShardsRequest, GetOrCreateOpenShardsResponse, ListShardsRequest,
+    ListShardsResponse, RenewShardLeasesRequest, RenewShardLeasesResponse,
+};
 use quickwit_proto::metastore_api::metastore_api_service_client::MetastoreApiServiceClient;
 use quickwit_proto::metastore_api::{
     AddSourceRequest, CreateIndexRequest, DeleteIndexRequest, DeleteQuery, DeleteSourceRequest,
@@ -56,6 +61,7 @@ const GRPC_METASTORE_BASE_URI: &str = "grpc://metastore.service.cluster";
 
 type Transport = InterceptedService<BalanceChannel<SocketAddr>, SpanContextInterceptor>;
 type MetastoreGrpcClientImpl = MetastoreApiServiceClient<Transport>;
+type IngestMetastoreGrpcClientImpl = IngestMetastoreServiceGrpcClient<Transport>;
 
 /// The [`MetastoreGrpcClient`] sends gRPC requests to cluster members running a [`Metastore`]
 /// service, those nodes will execute the queries on the metastore.
@@ -63,7 +69,8 @@ type MetastoreGrpcClientImpl = MetastoreApiServiceClient<Transport>;
 /// listen to cluster live nodes changes to keep updated the list of available nodes.
 #[derive(Clone)]
 pub struct MetastoreGrpcClient {
-    underlying: MetastoreGrpcClientImpl,
+    metastore: MetastoreGrpcClientImpl,
+    ingest_metastore: IngestMetastoreGrpcClientImpl,
     balance_channel: BalanceChannel<SocketAddr>,
     // URI used to describe the metastore resource of form
     // `GRPC_METASTORE_BASE_URI:{grpc_advertise_port}`. This value is only useful for
@@ -76,16 +83,21 @@ impl MetastoreGrpcClient {
     /// [`Metastore`] service. It listens to cluster members changes to update the
     /// nodes.
     /// `grpc_advertise_port` is used only for building the `uri`.
-    pub async fn from_balance_channel(
+    pub fn from_balance_channel(
         balance_channel: BalanceChannel<SocketAddr>,
     ) -> anyhow::Result<Self> {
-        let underlying = MetastoreApiServiceClient::with_interceptor(
+        let metastore = MetastoreApiServiceClient::with_interceptor(
+            balance_channel.clone(),
+            SpanContextInterceptor,
+        );
+        let ingest_metastore = IngestMetastoreServiceGrpcClient::with_interceptor(
             balance_channel.clone(),
             SpanContextInterceptor,
         );
         let uri = QuickwitUri::from_well_formed(GRPC_METASTORE_BASE_URI);
         Ok(Self {
-            underlying,
+            metastore,
+            ingest_metastore,
             balance_channel,
             uri,
         })
@@ -110,15 +122,7 @@ impl MetastoreGrpcClient {
             .await?;
         let dummy_addr = "127.0.0.1:1234".parse::<SocketAddr>()?;
         let balance_channel = BalanceChannel::from_channel(dummy_addr, channel);
-        let underlying = MetastoreApiServiceClient::with_interceptor(
-            balance_channel.clone(),
-            SpanContextInterceptor,
-        );
-        Ok(Self {
-            underlying,
-            balance_channel,
-            uri: QuickwitUri::from_well_formed(GRPC_METASTORE_BASE_URI),
-        })
+        Self::from_balance_channel(balance_channel)
     }
 }
 
@@ -148,7 +152,7 @@ impl Metastore for MetastoreGrpcClient {
             index_config_serialized_json,
         };
         let inner_response = self
-            .underlying
+            .metastore
             .clone()
             .create_index(request)
             .await
@@ -161,7 +165,7 @@ impl Metastore for MetastoreGrpcClient {
     /// List indexes.
     async fn list_indexes_metadatas(&self) -> MetastoreResult<Vec<IndexMetadata>> {
         let response = self
-            .underlying
+            .metastore
             .clone()
             .list_indexes_metadatas(ListIndexesMetadatasRequest {})
             .await
@@ -181,7 +185,7 @@ impl Metastore for MetastoreGrpcClient {
             index_id: index_id.to_string(),
         };
         let response = self
-            .underlying
+            .metastore
             .clone()
             .index_metadata(request)
             .await
@@ -201,7 +205,7 @@ impl Metastore for MetastoreGrpcClient {
         let request = DeleteIndexRequest {
             index_uid: index_uid.to_string(),
         };
-        self.underlying
+        self.metastore
             .clone()
             .delete_index(request)
             .await
@@ -225,7 +229,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.to_string(),
             split_metadata_list_serialized_json,
         };
-        self.underlying
+        self.metastore
             .clone()
             .stage_splits(tonic_request)
             .await
@@ -237,12 +241,16 @@ impl Metastore for MetastoreGrpcClient {
     async fn publish_splits<'a>(
         &self,
         index_uid: IndexUid,
-        split_ids: &[&'a str],
+        staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        publish_token: Option<String>,
     ) -> MetastoreResult<()> {
-        let split_ids_vec: Vec<String> = split_ids.iter().map(|split| split.to_string()).collect();
-        let replaced_split_ids_vec: Vec<String> = replaced_split_ids
+        let staged_split_ids: Vec<String> = staged_split_ids
+            .iter()
+            .map(|split| split.to_string())
+            .collect();
+        let replaced_split_ids: Vec<String> = replaced_split_ids
             .iter()
             .map(|split_id| split_id.to_string())
             .collect();
@@ -255,11 +263,12 @@ impl Metastore for MetastoreGrpcClient {
             })?;
         let request = PublishSplitsRequest {
             index_uid: index_uid.into(),
-            split_ids: split_ids_vec,
-            replaced_split_ids: replaced_split_ids_vec,
+            staged_split_ids,
+            replaced_split_ids,
             index_checkpoint_delta_serialized_json,
+            publish_token,
         };
-        self.underlying
+        self.metastore
             .clone()
             .publish_splits(request)
             .await
@@ -278,7 +287,7 @@ impl Metastore for MetastoreGrpcClient {
 
         let request = ListSplitsRequest { filter_json };
         let response = self
-            .underlying
+            .metastore
             .clone()
             .list_splits(request)
             .await
@@ -300,7 +309,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
         };
         let response = self
-            .underlying
+            .metastore
             .clone()
             .list_all_splits(request)
             .await
@@ -330,7 +339,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
             split_ids: split_ids_vec,
         };
-        self.underlying
+        self.metastore
             .clone()
             .mark_splits_for_deletion(request)
             .await
@@ -353,7 +362,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
             split_ids: split_ids_vec,
         };
-        self.underlying
+        self.metastore
             .clone()
             .delete_splits(request)
             .await
@@ -373,7 +382,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
             source_config_serialized_json,
         };
-        self.underlying
+        self.metastore
             .clone()
             .add_source(request)
             .await
@@ -394,7 +403,7 @@ impl Metastore for MetastoreGrpcClient {
             source_id: source_id.to_string(),
             enable,
         };
-        self.underlying
+        self.metastore
             .clone()
             .toggle_source(request)
             .await
@@ -409,7 +418,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
             source_id: source_id.to_string(),
         };
-        self.underlying
+        self.metastore
             .clone()
             .delete_source(request)
             .await
@@ -428,7 +437,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
             source_id: source_id.to_string(),
         };
-        self.underlying
+        self.metastore
             .clone()
             .reset_source_checkpoint(request)
             .await
@@ -442,7 +451,7 @@ impl Metastore for MetastoreGrpcClient {
             index_uid: index_uid.into(),
         };
         let response = self
-            .underlying
+            .metastore
             .clone()
             .last_delete_opstamp(request)
             .await
@@ -453,7 +462,7 @@ impl Metastore for MetastoreGrpcClient {
 
     async fn create_delete_task(&self, delete_query: DeleteQuery) -> MetastoreResult<DeleteTask> {
         let response = self
-            .underlying
+            .metastore
             .clone()
             .create_delete_task(delete_query)
             .await
@@ -477,7 +486,7 @@ impl Metastore for MetastoreGrpcClient {
             split_ids: split_ids_vec,
             delete_opstamp,
         };
-        self.underlying
+        self.metastore
             .clone()
             .update_splits_delete_opstamp(request)
             .await
@@ -496,7 +505,7 @@ impl Metastore for MetastoreGrpcClient {
             opstamp_start,
         };
         let response = self
-            .underlying
+            .metastore
             .clone()
             .list_delete_tasks(request)
             .await
@@ -522,7 +531,7 @@ impl Metastore for MetastoreGrpcClient {
             num_splits: num_splits as u64,
         };
         let response = self
-            .underlying
+            .metastore
             .clone()
             .list_stale_splits(request)
             .await
@@ -536,6 +545,42 @@ impl Metastore for MetastoreGrpcClient {
                 }
             })?;
         Ok(splits)
+    }
+
+    // Shard API
+    //
+
+    async fn get_or_create_open_shards(
+        &self,
+        request: GetOrCreateOpenShardsRequest,
+    ) -> MetastoreResult<GetOrCreateOpenShardsResponse> {
+        self.ingest_metastore
+            .clone()
+            .get_or_create_open_shards(request)
+            .await
+            .map(|tonic_response| tonic_response.into_inner())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
+    }
+
+    async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
+        self.ingest_metastore
+            .clone()
+            .list_shards(request)
+            .await
+            .map(|tonic_response| tonic_response.into_inner())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
+    }
+
+    async fn renew_shard_leases(
+        &self,
+        request: RenewShardLeasesRequest,
+    ) -> MetastoreResult<RenewShardLeasesResponse> {
+        self.ingest_metastore
+            .clone()
+            .renew_shard_leases(request)
+            .await
+            .map(|tonic_response| tonic_response.into_inner())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
     }
 }
 

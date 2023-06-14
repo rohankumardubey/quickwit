@@ -41,11 +41,10 @@ use serde_json::{json, Value as JsonValue};
 use tokio::time;
 use tracing::{debug, info, warn};
 
+use super::BatchBuilder;
 use crate::actors::DocProcessor;
 use crate::models::RawDocBatch;
-use crate::source::{
-    Source, SourceActor, SourceContext, SourceExecutionContext, TypedSourceFactory,
-};
+use crate::source::{Source, SourceActor, SourceContext, SourceRuntimeArgs, TypedSourceFactory};
 
 /// Number of bytes after which we cut a new batch.
 ///
@@ -70,7 +69,7 @@ impl TypedSourceFactory for PulsarSourceFactory {
     type Params = PulsarSourceParams;
 
     async fn typed_create_source(
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         params: PulsarSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self::Source> {
@@ -92,7 +91,7 @@ pub struct PulsarSourceState {
 }
 
 pub struct PulsarSource {
-    ctx: Arc<SourceExecutionContext>,
+    ctx: Arc<SourceRuntimeArgs>,
     pulsar_consumer: PulsarConsumer,
     params: PulsarSourceParams,
     subscription_name: String,
@@ -102,7 +101,7 @@ pub struct PulsarSource {
 
 impl PulsarSource {
     pub async fn try_new(
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         params: PulsarSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self> {
@@ -198,7 +197,7 @@ impl PulsarSource {
             .checkpoint_delta
             .record_partition_delta(partition, current_position, msg_position)
             .context("Failed to record partition delta.")?;
-        batch.push(doc, num_bytes as u64);
+        batch.add_doc(doc, num_bytes as u64);
 
         self.state.num_bytes_processed += num_bytes as u64;
         self.state.num_messages_processed += 1;
@@ -304,28 +303,6 @@ impl DeserializeMessage for PulsarMessage {
 
     fn deserialize_message(payload: &Payload) -> Self::Output {
         Bytes::from(payload.data.clone())
-    }
-}
-
-#[derive(Debug, Default)]
-struct BatchBuilder {
-    docs: Vec<Bytes>,
-    num_bytes: u64,
-    checkpoint_delta: SourceCheckpointDelta,
-}
-
-impl BatchBuilder {
-    fn build(self) -> RawDocBatch {
-        RawDocBatch {
-            docs: self.docs,
-            checkpoint_delta: self.checkpoint_delta,
-            force_commit: false,
-        }
-    }
-
-    fn push(&mut self, doc: Bytes, num_bytes: u64) {
-        self.docs.push(doc);
-        self.num_bytes += num_bytes;
     }
 }
 
@@ -476,7 +453,7 @@ mod pulsar_broker_tests {
     use super::*;
     use crate::new_split_id;
     use crate::source::pulsar_source::{msg_id_from_position, msg_id_to_position};
-    use crate::source::{quickwit_supported_sources, SuggestTruncate};
+    use crate::source::{quickwit_supported_sources, BatchBuilder, SuggestTruncate};
 
     static PULSAR_URI: &str = "pulsar://localhost:6650";
     static PULSAR_ADMIN_URI: &str = "http://localhost:8081";
@@ -709,7 +686,7 @@ mod pulsar_broker_tests {
         source_config: SourceConfig,
         start_checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<(ActorHandle<SourceActor>, Inbox<DocProcessor>)> {
-        let ctx = SourceExecutionContext::for_test(
+        let ctx = SourceRuntimeArgs::for_test(
             metastore,
             index_uid,
             PathBuf::from("./queues"),
@@ -832,7 +809,7 @@ mod pulsar_broker_tests {
             unreachable!()
         };
 
-        let ctx = SourceExecutionContext::for_test(
+        let ctx = SourceRuntimeArgs::for_test(
             metastore,
             index_uid,
             PathBuf::from("./queues"),

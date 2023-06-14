@@ -41,7 +41,7 @@ mod split_metadata_version;
 
 use std::ops::Range;
 
-pub use error::{MetastoreError, MetastoreResolverError, MetastoreResult};
+pub use error::{EntityKind, MetastoreError, MetastoreResolverError, MetastoreResult};
 pub use metastore::file_backed_metastore::FileBackedMetastore;
 pub use metastore::grpc_metastore::{GrpcMetastoreAdapter, MetastoreGrpcClient};
 pub(crate) use metastore::index_metadata::serialize::{IndexMetadataV0_6, VersionedIndexMetadata};
@@ -51,7 +51,9 @@ pub use metastore::postgresql_metastore::PostgresqlMetastore;
 pub use metastore::retrying_metastore::RetryingMetastore;
 #[cfg(any(test, feature = "testsuite"))]
 pub use metastore::MockMetastore;
-pub use metastore::{file_backed_metastore, IndexMetadata, ListSplitsQuery, Metastore};
+pub use metastore::{
+    file_backed_metastore, IndexMetadata, IngestMetastoreAdapter, ListSplitsQuery, Metastore,
+};
 pub use metastore_factory::{MetastoreFactory, UnsupportedMetastore};
 pub use metastore_resolver::MetastoreResolver;
 use quickwit_common::is_disjoint;

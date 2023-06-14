@@ -30,6 +30,7 @@ use quickwit_common::temp_dir::TempDirectory;
 use quickwit_common::KillSwitch;
 use quickwit_config::{IndexingSettings, SourceConfig};
 use quickwit_doc_mapper::DocMapper;
+use quickwit_ingest::IngesterPool;
 use quickwit_metastore::{Metastore, MetastoreError};
 use quickwit_storage::Storage;
 use tokio::join;
@@ -45,7 +46,7 @@ use crate::actors::uploader::UploaderType;
 use crate::actors::{Indexer, Packager, Publisher, Uploader};
 use crate::merge_policy::MergePolicy;
 use crate::models::{IndexingPipelineId, IndexingStatistics, Observe};
-use crate::source::{quickwit_supported_sources, SourceActor, SourceExecutionContext};
+use crate::source::{quickwit_supported_sources, SourceActor, SourceRuntimeArgs};
 use crate::split_store::IndexingSplitStore;
 use crate::SplitsUpdateMailbox;
 
@@ -260,7 +261,6 @@ impl IndexingPipeline {
             index_id=%index_id,
             source_id=%source_id,
             pipeline_ord=%self.params.pipeline_id.pipeline_ord,
-            root_dir=%self.params.indexing_directory.path().display(),
             "Spawning indexing pipeline.",
         );
         let (source_mailbox, source_inbox) = ctx
@@ -378,11 +378,12 @@ impl IndexingPipeline {
             .unwrap_or_default(); // TODO Have a stricter check.
         let source = ctx
             .protect_future(quickwit_supported_sources().load_source(
-                Arc::new(SourceExecutionContext {
-                    metastore: self.params.metastore.clone(),
-                    index_uid: self.params.pipeline_id.index_uid.clone(),
-                    queues_dir_path: self.params.queues_dir_path.clone(),
+                Arc::new(SourceRuntimeArgs {
+                    pipeline_id: self.params.pipeline_id.clone(),
                     source_config: self.params.source_config.clone(),
+                    metastore: self.params.metastore.clone(),
+                    ingester_pool: self.params.ingester_pool.clone(),
+                    queues_dir_path: self.params.queues_dir_path.clone(),
                 }),
                 source_checkpoint,
             ))
@@ -501,7 +502,7 @@ impl Handler<Spawn> for IndexingPipeline {
         }
         self.previous_generations_statistics.num_spawn_attempts = 1 + spawn.retry_count;
         if let Err(spawn_error) = self.spawn_pipeline(ctx).await {
-            if let Some(MetastoreError::IndexDoesNotExist { .. }) =
+            if let Some(MetastoreError::NotFound { .. }) =
                 spawn_error.downcast_ref::<MetastoreError>()
             {
                 info!(error = ?spawn_error, "Could not spawn pipeline, index might have been deleted.");
@@ -523,19 +524,26 @@ impl Handler<Spawn> for IndexingPipeline {
 
 pub struct IndexingPipelineParams {
     pub pipeline_id: IndexingPipelineId,
-    pub doc_mapper: Arc<dyn DocMapper>,
-    pub indexing_directory: TempDirectory,
-    pub queues_dir_path: PathBuf,
-    pub indexing_settings: IndexingSettings,
-    pub source_config: SourceConfig,
     pub metastore: Arc<dyn Metastore>,
     pub storage: Arc<dyn Storage>,
+
+    // Indexing-related parameters
+    pub doc_mapper: Arc<dyn DocMapper>,
+    pub indexing_directory: TempDirectory,
+    pub indexing_settings: IndexingSettings,
     pub split_store: IndexingSplitStore,
     pub merge_policy: Arc<dyn MergePolicy>,
     pub max_concurrent_split_uploads_index: usize,
-    pub max_concurrent_split_uploads_merge: usize,
     pub cooperative_indexing_permits: Option<Arc<Semaphore>>,
+
+    // Merge-related parameters
+    pub max_concurrent_split_uploads_merge: usize,
     pub merge_planner_mailbox: Mailbox<MergePlanner>,
+
+    // Source-related parameters
+    pub source_config: SourceConfig,
+    pub ingester_pool: IngesterPool,
+    pub queues_dir_path: PathBuf,
 }
 
 #[cfg(test)]
@@ -602,7 +610,7 @@ mod tests {
         metastore
             .expect_publish_splits()
             .withf(
-                |index_uid, splits, replaced_splits, checkpoint_delta_opt| -> bool {
+                |index_uid, splits, replaced_splits, checkpoint_delta_opt, publish_token| -> bool {
                     let checkpoint_delta = checkpoint_delta_opt.as_ref().unwrap();
                     index_uid.to_string() == "test-index:11111111111111111111111111"
                         && checkpoint_delta.source_id == "test-source"
@@ -612,7 +620,7 @@ mod tests {
                             .ends_with(":(00000000000000000000..00000000000000001030])")
                 },
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _, _| Ok(()));
         let node_id = "test-node";
         let metastore = Arc::new(metastore);
         let pipeline_id = IndexingPipelineId {
@@ -639,6 +647,7 @@ mod tests {
             source_config,
             indexing_directory: TempDirectory::for_test(),
             indexing_settings: IndexingSettings::for_test(),
+            ingester_pool: IngesterPool::default(),
             metastore: metastore.clone(),
             storage,
             split_store,
@@ -696,17 +705,23 @@ mod tests {
         metastore
             .expect_publish_splits()
             .withf(
-                |index_uid, splits, replaced_split_ids, checkpoint_delta_opt| -> bool {
+                |index_uid,
+                 staged_split_ids,
+                 replaced_split_ids,
+                 checkpoint_delta_opt,
+                 publish_token|
+                 -> bool {
                     let checkpoint_delta = checkpoint_delta_opt.as_ref().unwrap();
                     index_uid.to_string() == "test-index:11111111111111111111111111"
-                        && splits.len() == 1
+                        && staged_split_ids.len() == 1
                         && replaced_split_ids.is_empty()
                         && checkpoint_delta.source_id == "test-source"
                         && format!("{:?}", checkpoint_delta.source_delta)
                             .ends_with(":(00000000000000000000..00000000000000001030])")
+                        && publish_token.is_none()
                 },
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _, _| Ok(()));
         let universe = Universe::new();
         let node_id = "test-node";
         let metastore = Arc::new(metastore);
@@ -734,6 +749,7 @@ mod tests {
             source_config,
             indexing_directory: TempDirectory::for_test(),
             indexing_settings: IndexingSettings::for_test(),
+            ingester_pool: IngesterPool::default(),
             metastore: metastore.clone(),
             queues_dir_path: PathBuf::from("./queues"),
             storage,
@@ -809,6 +825,7 @@ mod tests {
             source_config,
             indexing_directory: TempDirectory::for_test(),
             indexing_settings: IndexingSettings::for_test(),
+            ingester_pool: IngesterPool::default(),
             metastore: metastore.clone(),
             queues_dir_path: PathBuf::from("./queues"),
             storage,
@@ -870,17 +887,23 @@ mod tests {
         metastore
             .expect_publish_splits()
             .withf(
-                |index_uid, splits, replaced_split_ids, checkpoint_delta_opt| -> bool {
+                |index_uid,
+                 staged_split_ids,
+                 replaced_split_ids,
+                 checkpoint_delta_opt,
+                 publish_token|
+                 -> bool {
                     let checkpoint_delta = checkpoint_delta_opt.as_ref().unwrap();
                     index_uid.to_string() == "test-index:11111111111111111111111111"
-                        && splits.is_empty()
+                        && staged_split_ids.is_empty()
                         && replaced_split_ids.is_empty()
                         && checkpoint_delta.source_id == "test-source"
                         && format!("{:?}", checkpoint_delta.source_delta)
                             .ends_with(":(00000000000000000000..00000000000000001030])")
+                        && publish_token.is_none()
                 },
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _, _| Ok(()));
         let universe = Universe::new();
         let node_id = "test-node";
         let metastore = Arc::new(metastore);
@@ -926,6 +949,7 @@ mod tests {
             source_config,
             indexing_directory: TempDirectory::for_test(),
             indexing_settings: IndexingSettings::for_test(),
+            ingester_pool: IngesterPool::default(),
             metastore: metastore.clone(),
             queues_dir_path: PathBuf::from("./queues"),
             storage,
@@ -943,7 +967,7 @@ mod tests {
         assert_eq!(pipeline_statistics.generation, 1);
         assert_eq!(pipeline_statistics.num_spawn_attempts, 1);
         assert_eq!(pipeline_statistics.num_published_splits, 0);
-        assert_eq!(pipeline_statistics.num_empty_splits, 1);
+        assert_eq!(pipeline_statistics.num_empty_publish_ops, 1);
         assert_eq!(
             pipeline_statistics.num_docs,
             pipeline_statistics.num_invalid_docs

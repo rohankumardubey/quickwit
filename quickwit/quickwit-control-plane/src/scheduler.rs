@@ -235,7 +235,6 @@ impl IndexingScheduler {
                 return Ok(());
             }
         }
-
         let indexers = self.get_indexers_from_cluster_state().await;
         let running_indexing_tasks_by_node_id: HashMap<String, Vec<IndexingTask>> = indexers
             .iter()

@@ -54,3 +54,6 @@ pub use split_attrs::{create_split_metadata, SplitAttrs};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Observe;
+
+#[derive(Debug)]
+pub struct NewPublishToken(pub String);

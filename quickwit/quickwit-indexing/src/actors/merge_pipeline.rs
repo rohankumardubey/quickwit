@@ -195,7 +195,6 @@ impl MergePipeline {
             index_id=%self.params.pipeline_id.index_uid.index_id(),
             source_id=%self.params.pipeline_id.source_id,
             pipeline_ord=%self.params.pipeline_id.pipeline_ord,
-            root_dir=%self.params.indexing_directory.path().display(),
             merge_policy=?self.params.merge_policy,
             "Spawning merge pipeline.",
         );
@@ -407,7 +406,7 @@ impl Handler<Spawn> for MergePipeline {
         }
         self.previous_generations_statistics.num_spawn_attempts = 1 + spawn.retry_count;
         if let Err(spawn_error) = self.spawn_pipeline(ctx).await {
-            if let Some(MetastoreError::IndexDoesNotExist { .. }) =
+            if let Some(MetastoreError::NotFound { .. }) =
                 spawn_error.downcast_ref::<MetastoreError>()
             {
                 info!(error = ?spawn_error, "Could not spawn pipeline, index might have been deleted.");

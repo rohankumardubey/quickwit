@@ -20,6 +20,10 @@
 use async_trait::async_trait;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
+use quickwit_ingest::{
+    GetOrCreateOpenShardsRequest, GetOrCreateOpenShardsResponse, ListShardsRequest,
+    ListShardsResponse, RenewShardLeasesRequest, RenewShardLeasesResponse,
+};
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 use quickwit_proto::IndexUid;
 
@@ -138,17 +142,19 @@ impl Metastore for InstrumentedMetastore {
     async fn publish_splits<'a>(
         &self,
         index_uid: IndexUid,
-        split_ids: &[&'a str],
+        staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        publish_token: Option<String>,
     ) -> MetastoreResult<()> {
         instrument!(
             self.underlying
                 .publish_splits(
                     index_uid.clone(),
-                    split_ids,
+                    staged_split_ids,
                     replaced_split_ids,
                     checkpoint_delta_opt,
+                    publish_token,
                 )
                 .await,
             [publish_splits, index_uid.index_id()]
@@ -241,6 +247,8 @@ impl Metastore for InstrumentedMetastore {
     }
 
     // Delete task API
+    //
+
     async fn create_delete_task(&self, delete_query: DeleteQuery) -> MetastoreResult<DeleteTask> {
         let index_uid: IndexUid = delete_query.index_uid.clone().into();
         instrument!(
@@ -294,6 +302,39 @@ impl Metastore for InstrumentedMetastore {
                 .list_stale_splits(index_uid.clone(), delete_opstamp, num_splits)
                 .await,
             [list_stale_splits, index_uid.index_id()]
+        );
+    }
+
+    // Shard API
+    //
+
+    async fn get_or_create_open_shards(
+        &self,
+        request: GetOrCreateOpenShardsRequest,
+    ) -> MetastoreResult<GetOrCreateOpenShardsResponse> {
+        let index_uid: IndexUid = request.subrequests[0].index_uid.clone().into(); // FIXME
+        instrument!(
+            self.underlying.get_or_create_open_shards(request).await,
+            [get_or_create_open_shards, index_uid.index_id()]
+        );
+    }
+
+    async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
+        let index_uid: IndexUid = request.subrequests[0].index_uid.clone().into(); // FIXME
+        instrument!(
+            self.underlying.list_shards(request).await,
+            [list_shards, index_uid.index_id()]
+        );
+    }
+
+    async fn renew_shard_leases(
+        &self,
+        request: RenewShardLeasesRequest,
+    ) -> MetastoreResult<RenewShardLeasesResponse> {
+        let index_uid: IndexUid = request.subrequests[0].index_uid.clone().into(); // FIXME
+        instrument!(
+            self.underlying.renew_shard_leases(request).await,
+            [renew_shard_leases, index_uid.index_id()]
         );
     }
 }

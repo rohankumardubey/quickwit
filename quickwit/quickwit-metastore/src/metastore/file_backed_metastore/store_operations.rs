@@ -26,6 +26,7 @@ use quickwit_storage::{Storage, StorageError, StorageErrorKind};
 use serde::{Deserialize, Serialize};
 
 use super::{IndexState, LazyFileBackedIndex};
+use crate::error::EntityKind;
 use crate::metastore::file_backed_metastore::file_backed_index::FileBackedIndex;
 use crate::{MetastoreError, MetastoreResult};
 
@@ -60,9 +61,9 @@ pub(crate) fn meta_path(index_id: &str) -> PathBuf {
 
 fn convert_error(index_id: &str, storage_err: StorageError) -> MetastoreError {
     match storage_err.kind() {
-        StorageErrorKind::NotFound => MetastoreError::IndexDoesNotExist {
+        StorageErrorKind::NotFound => MetastoreError::NotFound(EntityKind::Index {
             index_id: index_id.to_string(),
-        },
+        }),
         StorageErrorKind::Unauthorized => MetastoreError::Forbidden {
             message: "The request credentials do not allow for this operation.".to_string(),
         },
@@ -234,9 +235,9 @@ pub(crate) async fn delete_index(storage: &dyn Storage, index_id: &str) -> Metas
         .map_err(|storage_err| convert_error(index_id, storage_err))?;
 
     if !file_exists {
-        return Err(MetastoreError::IndexDoesNotExist {
+        return Err(MetastoreError::NotFound(EntityKind::Index {
             index_id: index_id.to_string(),
-        });
+        }));
     }
 
     // Put data back into storage.

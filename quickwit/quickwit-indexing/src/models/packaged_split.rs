@@ -65,6 +65,7 @@ pub struct PackagedSplitBatch {
     /// If `None`, the split batch was built in the `IndexingPipeline`.
     pub merge_operation: Option<TrackedObject<MergeOperation>>,
     pub publish_lock: PublishLock,
+    pub publish_token: Option<String>,
 }
 
 impl PackagedSplitBatch {
@@ -76,6 +77,7 @@ impl PackagedSplitBatch {
         splits: Vec<PackagedSplit>,
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
         publish_lock: PublishLock,
+        publish_token: Option<String>,
         merge_operation: Option<TrackedObject<MergeOperation>>,
         span: Span,
     ) -> Self {
@@ -83,7 +85,7 @@ impl PackagedSplitBatch {
         assert_eq!(
             splits
                 .iter()
-                .map(|split| split.split_attrs.pipeline_id.index_uid.clone())
+                .map(|split| &split.split_attrs.pipeline_id.index_uid)
                 .collect::<HashSet<_>>()
                 .len(),
             1,
@@ -94,15 +96,13 @@ impl PackagedSplitBatch {
             splits,
             checkpoint_delta_opt,
             publish_lock,
+            publish_token,
             merge_operation,
         }
     }
 
     pub fn index_uid(&self) -> IndexUid {
-        self.splits
-            .get(0)
-            .map(|split| split.split_attrs.pipeline_id.index_uid.clone())
-            .unwrap()
+        self.splits[0].split_attrs.pipeline_id.index_uid.clone()
     }
 
     pub fn split_ids(&self) -> Vec<String> {
