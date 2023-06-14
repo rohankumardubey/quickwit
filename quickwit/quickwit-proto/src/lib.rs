@@ -336,6 +336,10 @@ impl IndexUid {
         Self::from_parts(index_id, Ulid::new().to_string())
     }
 
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     pub fn from_parts(index_id: impl Into<String>, incarnation_id: impl Into<String>) -> Self {
         let incarnation_id = incarnation_id.into();
         let index_id = index_id.into();
@@ -377,13 +381,19 @@ impl fmt::Display for IndexUid {
 
 impl From<String> for IndexUid {
     fn from(index_uid: String) -> Self {
-        IndexUid(index_uid)
+        Self(index_uid)
     }
 }
 
 impl ToString for IndexingTask {
     fn to_string(&self) -> String {
         format!("{}:{}", self.index_uid, self.source_id)
+    }
+}
+
+impl PartialEq<String> for IndexUid {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
     }
 }
 

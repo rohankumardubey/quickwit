@@ -130,9 +130,10 @@ message StageSplitsRequest {
 
 message PublishSplitsRequest {
   string index_uid = 1;
-  repeated string split_ids = 2;
+  repeated string staged_split_ids = 2;
   repeated string replaced_split_ids = 3;
   optional string index_checkpoint_delta_serialized_json = 4;
+  optional string publish_token = 5;
 }
 
 message MarkSplitsForDeletionRequest {

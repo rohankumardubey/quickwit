@@ -29,6 +29,7 @@ use futures::{Stream, StreamExt};
 use tokio::sync::RwLock;
 
 use super::Change;
+use crate::rendezvous_hasher::max_affinity;
 
 /// A pool of `V` values identified by `K` keys. The pool can be updated manually by calling the
 /// `add/remove` methods or by listening to a stream of changes.
@@ -118,6 +119,12 @@ where
             .collect()
     }
 
+    /// Returns a random value.
+    pub async fn any(&self) -> Option<V> {
+        // FIXME
+        self.inner.read().await.map.values().next().cloned()
+    }
+
     /// Returns the value associated with the given key.
     pub async fn get<Q>(&self, key: &Q) -> Option<V>
     where
@@ -125,6 +132,13 @@ where
         K: Borrow<Q>,
     {
         self.inner.read().await.map.get(key).cloned()
+    }
+
+    /// Returns the value with the highest affinity for the given key.
+    pub async fn get_by_affinity<Q>(&self, key: &K) -> Option<V> {
+        let inner_guard = self.inner.read().await;
+        let candidate = max_affinity(inner_guard.map.keys(), &key)?;
+        self.inner.read().await.map.get(candidate).cloned()
     }
 
     /// Finds a key in the pool that satisfies the given predicate.

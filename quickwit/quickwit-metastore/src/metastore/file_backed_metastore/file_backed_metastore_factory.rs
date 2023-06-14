@@ -28,7 +28,7 @@ use quickwit_config::{MetastoreBackend, MetastoreConfig};
 use quickwit_storage::{StorageResolver, StorageResolverError};
 use regex::Regex;
 use tokio::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::metastore::instrumented_metastore::InstrumentedMetastore;
 use crate::{
@@ -52,21 +52,27 @@ pub struct FileBackedMetastoreFactory {
     cache: Arc<Mutex<HashMap<Uri, Weak<dyn Metastore>>>>,
 }
 
-fn extract_polling_interval_from_uri(uri: &str) -> (String, Option<Duration>) {
+fn extract_polling_interval_from_uri(uri: &str) -> (Uri, Option<Duration>) {
     static URI_FRAGMENT_PATTERN: OnceCell<Regex> = OnceCell::new();
     if let Some(captures) = URI_FRAGMENT_PATTERN
-        .get_or_init(|| Regex::new("(.*)#polling_interval=([1-9][0-9]{0,8})s").unwrap())
+        .get_or_init(|| Regex::new(r"(.*)#polling_interval=([^\?]*)").unwrap())
         .captures(uri)
     {
-        let uri_without_fragment = captures.get(1).unwrap().as_str().to_string();
-        let polling_interval_in_secs: u64 =
-            captures.get(2).unwrap().as_str().parse::<u64>().unwrap();
-        (
-            uri_without_fragment,
-            Some(Duration::from_secs(polling_interval_in_secs)),
-        )
+        let uri_without_fragment_str = captures
+            .get(1)
+            .expect("The 0th capture should be set.")
+            .as_str();
+        let uri_without_fragment = Uri::from_well_formed(uri_without_fragment_str);
+
+        let polling_interval_str = captures
+            .get(2)
+            .expect("The 1st capture should be set.")
+            .as_str();
+        let polling_interval_opt = humantime::parse_duration(polling_interval_str).ok();
+        (uri_without_fragment, polling_interval_opt)
     } else {
-        (uri.to_string(), None)
+        let uri = Uri::from_well_formed(uri);
+        (uri, None)
     }
 }
 
@@ -109,11 +115,17 @@ impl MetastoreFactory for FileBackedMetastoreFactory {
 
     async fn resolve(
         &self,
-        _metastore_config: &MetastoreConfig,
+        metastore_config: &MetastoreConfig,
         uri: &Uri,
     ) -> Result<Arc<dyn Metastore>, MetastoreResolverError> {
-        let (uri_stripped, polling_interval_opt) = extract_polling_interval_from_uri(uri.as_str());
-        let uri = Uri::from_well_formed(uri_stripped);
+        let file_metastore_config = metastore_config.as_file().ok_or_else(|| {
+            let message = format!(
+                "Expected file metastore config, got `{:?}`.",
+                metastore_config.backend()
+            );
+            MetastoreResolverError::InvalidConfig(message)
+        })?;
+        let (uri, polling_interval_opt) = extract_polling_interval_from_uri(uri.as_str());
         if let Some(metastore) = self.get_from_cache(&uri).await {
             debug!("using metastore from cache");
             return Ok(metastore);
@@ -140,6 +152,9 @@ impl MetastoreFactory for FileBackedMetastoreFactory {
                     })
                 }
             })?;
+        let polling_interval_opt = file_metastore_config
+            .polling_interval
+            .or(polling_interval_opt);
         let file_backed_metastore = FileBackedMetastore::try_new(storage, polling_interval_opt)
             .await
             .map_err(MetastoreResolverError::FailedToOpenMetastore)?;
@@ -159,29 +174,19 @@ mod tests {
 
     #[test]
     fn test_extract_polling_interval_from_uri() {
-        assert_eq!(
-            extract_polling_interval_from_uri("file://some-uri#polling_interval=23s"),
-            ("file://some-uri".to_string(), Some(Duration::from_secs(23)))
-        );
-        assert_eq!(
-            extract_polling_interval_from_uri(
-                "file://some-uri#polling_interval=18446744073709551616s"
-            ),
-            (
-                "file://some-uri#polling_interval=18446744073709551616s".to_string(),
-                None
-            )
-        );
-        assert_eq!(
-            extract_polling_interval_from_uri("file://some-uri#polling_interval=0s"),
-            ("file://some-uri#polling_interval=0s".to_string(), None)
-        );
-        assert_eq!(
-            extract_polling_interval_from_uri("file://some-uri#otherfragment#polling_interval=10s"),
-            (
-                "file://some-uri#otherfragment".to_string(),
-                Some(Duration::from_secs(10))
-            )
-        );
+        let (stripped_uri, polling_interval_opt) =
+            extract_polling_interval_from_uri("file://some-uri#polling_interval=10s");
+        assert_eq!(stripped_uri, "file://some-uri");
+        assert_eq!(polling_interval_opt.unwrap(), Duration::from_secs(10));
+
+        let (stripped_uri, polling_interval_opt) =
+            extract_polling_interval_from_uri("file://some-uri#polling_interval=1m");
+        assert_eq!(stripped_uri, "file://some-uri");
+        assert_eq!(polling_interval_opt.unwrap(), Duration::from_secs(60));
+
+        let (stripped_uri, polling_interval_opt) =
+            extract_polling_interval_from_uri("file://some-uri#polling_interval=0s");
+        assert_eq!(stripped_uri, "file://some-uri");
+        assert!(polling_interval_opt.is_none());
     }
 }

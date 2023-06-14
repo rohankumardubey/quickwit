@@ -127,6 +127,24 @@
     ],
     "version": "0.6"
   },
+  "shards": {
+    "native-ingest": [
+      {
+        "end_hash_key_exclusive": 0,
+        "follower_id": "follower",
+        "index_uid": "test:11111111111111111111111111",
+        "leader_id": "leader",
+        "lease_expiration_timestamp_millis": 0,
+        "lessee_id": null,
+        "publish_position_inclusive": "",
+        "replication_position_exclusive": 0,
+        "shard_id": 0,
+        "shard_state": 0,
+        "source_id": "native-ingest",
+        "start_hash_key_inclusive": 0
+      }
+    ]
+  },
   "splits": [
     {
       "create_timestamp": 3,

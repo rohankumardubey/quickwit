@@ -46,7 +46,7 @@ pub fn render_config(config_content: &[u8]) -> Result<String> {
         for captures in TEMPLATE_ENV_VAR_CAPTURE.captures_iter(&line) {
             let env_var_key = captures
                 .get(1)
-                .expect("Captures should always have at least one match.")
+                .expect("Captures should have at least one match.")
                 .as_str();
             let substitution_value = {
                 if line.trim_start().starts_with('#') {
@@ -57,7 +57,7 @@ pub fn render_config(config_content: &[u8]) -> Result<String> {
                     // This line is commented out, return the line as is.
                     captures
                         .get(0)
-                        .expect("The 0th capture should aways be set.")
+                        .expect("The 0th capture should be set.")
                         .as_str()
                         .to_string()
                 } else if let Ok(env_var_value) = std::env::var(env_var_key) {

@@ -44,8 +44,8 @@ use crate::BuildInfo;
 /// should be registered.
 pub fn elastic_api_handlers(
     quickwit_config: Arc<QuickwitConfig>,
-    search_service: Arc<dyn SearchService>,
     ingest_service: IngestServiceClient,
+    search_service: Arc<dyn SearchService>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     es_compat_cluster_info_handler(quickwit_config, BuildInfo::get())
         .or(es_compat_search_handler(search_service.clone()))

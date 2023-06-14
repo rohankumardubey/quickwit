@@ -78,7 +78,6 @@ version: 0.6
 # discouraged. Prefer the alternative authentication methods that your storage
 # backend may provide.
 #
-# storage:
 #   azure:
 #     account: ${QW_AZURE_STORAGE_ACCOUNT}
 #     access_key: ${QW_AZURE_STORAGE_ACCESS_KEY}
@@ -94,7 +93,10 @@ version: 0.6
 #
 # -------------------------------- Metastore settings --------------------------------
 #
-# metastore:
+#  metastore:
+#    file:
+#      polling_interval: 30s
+#
 #   postgres:
 #     max_num_connections: 20
 #

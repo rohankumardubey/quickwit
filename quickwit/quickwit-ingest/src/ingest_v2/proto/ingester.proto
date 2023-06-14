@@ -1,0 +1,226 @@
+// Copyright (C) 2023 Quickwit, Inc.
+//
+// Quickwit is offered under the AGPL v3.0 and as commercial software.
+// For commercial licensing, contact us at hello@quickwit.io.
+//
+// AGPL:
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+syntax = "proto3";
+
+package ingester;
+
+import "ingest.proto";
+import "shard.proto";
+
+
+service IngesterService {
+    /// Returns the list of open shards for one or multiple indexes.
+    rpc GetOpenShards(GetOpenShardsRequest) returns (GetOpenShardsResponse);
+
+    /// Persists batches of documents to primary shards owned by a leader.
+    rpc Persist(PersistRequest) returns (PersistResponse);
+
+    /// Opens a replication stream from a leader to a follower.
+    rpc OpenReplicationStream(stream SynReplicationMessage) returns (stream AckReplicationMessage);
+
+    /// Opens a new stream of documents stored in one or multiple shards. The first message of the stream returns the ID of the newly created stream,
+    /// which can be used later to update the stream with new shards or to close it.
+    rpc OpenFetchStream(OpenFetchStreamRequest) returns (stream FetchMessage);
+
+    /// Updates a fetch stream.
+    rpc UpdateFetchStream(UpdateFetchStreamRequest) returns (UpdateFetchStreamResponse);
+
+    /// Truncates the shards at the given positions. Callers should this RPC on leaders and they will forward to followers.
+    rpc Truncate(TruncateRequest) returns (TruncateResponse);
+
+    // rpc OpenWatchStream(OpenWatchStreamRequest) returns (stream WatchMessage);
+
+    // rpc UpdateWatchStream(UpdateWatchStreamRequest) returns (UpdateWatchStreamResponse);
+}
+
+message GetOpenShardsRequest {
+    repeated GetOpenShardsSubrequest subrequests = 1;
+}
+
+message GetOpenShardsSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+}
+
+message GetOpenShardsResponse {
+    repeated GetOpenShardsSubresponse subresponses = 1;
+}
+
+message GetOpenShardsSubresponse {
+    string index_uid = 1;
+    string source_id = 2;
+    repeated shard.Shard shards = 3;
+}
+
+message PersistRequest {
+    string leader_id = 1;
+    uint32 commit_type = 2;
+    repeated PersistSubrequest subrequests = 3;
+}
+
+message PersistSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    ingest.DocBatchV2 doc_batch = 4;
+}
+
+message PersistResponse {
+    string leader_id = 1;
+    repeated PersistSuccess successes = 2;
+    repeated PersistFailure failures = 3;
+}
+
+message PersistSuccess {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    optional uint64 replication_position_inclusive = 4;
+}
+
+message PersistFailure {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    // ingest.DocBatchV2 doc_batch = 4;
+    // ingest.IngestError error = 5;
+}
+
+message SynReplicationMessage {
+    oneof message {
+        OpenReplicationStreamRequest open_request = 1;
+        ReplicateRequest replicate_request = 2;
+    }
+}
+
+message AckReplicationMessage {
+    oneof message {
+        OpenReplicationStreamResponse open_response = 1;
+        ReplicateResponse replicate_response = 3;
+    }
+}
+
+message OpenReplicationStreamRequest {
+    string leader_id = 1;
+    string follower_id = 2;
+}
+
+message OpenReplicationStreamResponse {
+}
+
+message ReplicateRequest {
+    string leader_id = 1;
+    string follower_id = 2;
+    uint32 commit_type = 3;
+    repeated ReplicateSubrequest subrequests = 4;
+}
+
+message ReplicateSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    optional uint64 from_position_exclusive = 4;
+    ingest.DocBatchV2 doc_batch = 6;
+}
+
+message ReplicateResponse {
+    string follower_id = 1;
+    repeated ReplicateSuccess successes = 2;
+    repeated ReplicateFailure failures = 3;
+}
+
+
+message ReplicateSuccess {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    optional uint64 replica_position_inclusive = 4;
+}
+
+message ReplicateFailure {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    // ingest.DocBatchV2 doc_batch = 4;
+    // ingest.IngestError error = 5;
+}
+
+message TruncateRequest {
+    repeated TruncateSubrequest subrequests = 1;
+}
+
+message TruncateSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    uint64 to_position_inclusive = 4;
+}
+
+message TruncateResponse {
+    // TODO
+}
+
+message OpenFetchStreamRequest {
+    string client_id = 1;
+    repeated SubscribeToShard subscriptions = 2;
+}
+
+message SubscribeToShard {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    optional uint64 from_position_exclusive = 4;
+    optional uint64 to_position_inclusive = 5;
+}
+
+message UnsubscribeFromShard {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+}
+
+message OpenFetchStreamResponse {
+    string ingester_id = 1;
+    string fetch_stream_id = 2;
+}
+
+message FetchPayload {
+    string index_uid = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    uint64 from_position_inclusive = 4;
+    ingest.DocBatchV2 doc_batch = 5;
+}
+
+message FetchMessage {
+    oneof message {
+        OpenFetchStreamResponse response = 1;
+        FetchPayload payload = 2;
+    }
+}
+
+message UpdateFetchStreamRequest {
+    string fetch_stream_id = 1;
+    repeated SubscribeToShard subscriptions = 2;
+    repeated UnsubscribeFromShard unsubscriptions = 3;
+}
+
+message UpdateFetchStreamResponse {
+}

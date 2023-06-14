@@ -146,6 +146,7 @@ pub struct IndexConfigV0_6 {
     pub search_settings: SearchSettings,
     #[serde(rename = "retention")]
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub retention_policy: Option<RetentionPolicy>,
 }
 

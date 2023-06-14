@@ -21,8 +21,8 @@ use quickwit_proto::IndexUid;
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct IndexingPipelineId {
+    pub node_id: String,
     pub index_uid: IndexUid,
     pub source_id: String,
-    pub node_id: String,
     pub pipeline_ord: usize,
 }

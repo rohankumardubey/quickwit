@@ -35,7 +35,9 @@ use quickwit_common::temp_dir;
 use quickwit_config::{
     build_doc_mapper, IndexConfig, IndexerConfig, SourceConfig, INGEST_API_SOURCE_ID,
 };
-use quickwit_ingest::{DropQueueRequest, IngestApiService, ListQueuesRequest, QUEUES_DIR_NAME};
+use quickwit_ingest::{
+    DropQueueRequest, IngestApiService, IngesterPool, ListQueuesRequest, QUEUES_DIR_NAME,
+};
 use quickwit_metastore::{IndexMetadata, Metastore, MetastoreError};
 use quickwit_proto::indexing_api::{ApplyIndexingPlanRequest, IndexingTask};
 use quickwit_proto::{IndexUid, ServiceError, ServiceErrorCode};
@@ -133,6 +135,7 @@ pub struct IndexingService {
     cluster: Cluster,
     metastore: Arc<dyn Metastore>,
     ingest_api_service_opt: Option<Mailbox<IngestApiService>>,
+    ingester_pool: IngesterPool,
     storage_resolver: StorageResolver,
     indexing_pipeline_handles: HashMap<IndexingPipelineId, ActorHandle<IndexingPipeline>>,
     counters: IndexingServiceCounters,
@@ -152,6 +155,7 @@ impl IndexingService {
         cluster: Cluster,
         metastore: Arc<dyn Metastore>,
         ingest_api_service_opt: Option<Mailbox<IngestApiService>>,
+        ingester_pool: IngesterPool,
         storage_resolver: StorageResolver,
     ) -> anyhow::Result<IndexingService> {
         let split_store_space_quota = SplitStoreQuota::new(
@@ -176,6 +180,7 @@ impl IndexingService {
             cluster,
             metastore,
             ingest_api_service_opt,
+            ingester_pool,
             storage_resolver,
             local_split_store: Arc::new(local_split_store),
             indexing_pipeline_handles: Default::default(),
@@ -315,6 +320,7 @@ impl IndexingService {
             indexing_settings: index_config.indexing_settings.clone(),
             source_config,
             indexing_directory,
+            ingester_pool: self.ingester_pool.clone(),
             metastore: self.metastore.clone(),
             storage,
             split_store,
@@ -512,8 +518,12 @@ impl IndexingService {
 
         // Add new pipelines.
         for new_pipeline_id in added_pipeline_ids {
-            info!(pipeline_id=?new_pipeline_id, "Spawning indexing pipeline.");
-
+            info!(
+                index_id=%new_pipeline_id.index_uid.index_id(),
+                source_id=%new_pipeline_id.source_id,
+                pipeline_ord=%new_pipeline_id.pipeline_ord,
+                "Spawning indexing pipeline."
+            );
             if let Some(index_metadata) =
                 indexes_metadata_by_index_id.get(&new_pipeline_id.index_uid)
             {
@@ -818,6 +828,7 @@ mod tests {
             init_ingest_api(universe, &queues_dir_path, &IngestApiConfig::default())
                 .await
                 .unwrap();
+        let ingester_pool = IngesterPool::default();
         let indexing_server = IndexingService::new(
             "test-node".to_string(),
             data_dir_path.to_path_buf(),
@@ -826,6 +837,7 @@ mod tests {
             cluster,
             metastore,
             Some(ingest_api_service),
+            ingester_pool,
             storage_resolver.clone(),
         )
         .await
@@ -1211,6 +1223,7 @@ mod tests {
             init_ingest_api(&universe, &queues_dir_path, &IngestApiConfig::default())
                 .await
                 .unwrap();
+        let ingester_pool = IngesterPool::default();
         let indexing_server = IndexingService::new(
             "test-node".to_string(),
             data_dir_path,
@@ -1219,6 +1232,7 @@ mod tests {
             cluster.clone(),
             metastore.clone(),
             Some(ingest_api_service),
+            ingester_pool,
             storage_resolver.clone(),
         )
         .await
@@ -1385,6 +1399,7 @@ mod tests {
             .ask_for_res(create_queue_req)
             .await
             .unwrap();
+        let ingester_pool = IngesterPool::default();
 
         // Setup `IndexingService`
         let data_dir_path = temp_dir.path().to_path_buf();
@@ -1399,6 +1414,7 @@ mod tests {
             cluster.clone(),
             metastore.clone(),
             Some(ingest_api_service.clone()),
+            ingester_pool,
             storage_resolver.clone(),
         )
         .await

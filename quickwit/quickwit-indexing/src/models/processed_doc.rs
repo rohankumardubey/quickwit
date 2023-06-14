@@ -43,6 +43,7 @@ pub struct ProcessedDocBatch {
     pub docs: Vec<ProcessedDoc>,
     pub checkpoint_delta: SourceCheckpointDelta,
     pub force_commit: bool,
+    pub publish_token: Option<String>,
 }
 
 impl fmt::Debug for ProcessedDocBatch {

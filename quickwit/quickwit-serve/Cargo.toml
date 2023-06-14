@@ -12,8 +12,8 @@ documentation = "https://quickwit.io/docs/"
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-bytes = { workspace = true }
 byte-unit = { workspace = true }
+bytes = { workspace = true }
 elasticsearch-dsl = "0.4.14"
 futures = { workspace = true }
 futures-util = { workspace = true }
@@ -23,6 +23,7 @@ itertools = { workspace = true }
 mime_guess = { workspace = true }
 num_cpus = { workspace = true }
 once_cell = { workspace = true }
+opentelemetry = { workspace = true }
 regex = { workspace = true }
 rust-embed = { workspace = true }
 serde = { workspace = true }
@@ -33,12 +34,11 @@ termcolor = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
-tower-http = { workspace = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 utoipa = { workspace = true }
-opentelemetry = { workspace = true }
 warp = { workspace = true }
 
 quickwit-actors = { workspace = true }
@@ -57,10 +57,11 @@ quickwit-janitor = { workspace = true }
 quickwit-metastore = { workspace = true }
 quickwit-opentelemetry = { workspace = true }
 quickwit-proto = { workspace = true }
+quickwit-query = { workspace = true }
 quickwit-search = { workspace = true }
 quickwit-storage = { workspace = true }
-quickwit-query = { workspace = true }
 quickwit-telemetry = { workspace = true }
+quickwit-types = { workspace = true }
 
 [build-dependencies]
 time = { workspace = true }
@@ -71,8 +72,8 @@ chitchat = { workspace = true }
 itertools = { workspace = true }
 mockall = { workspace = true }
 rand = { workspace = true }
-tokio = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true }
 
 quickwit-actors = { workspace = true, features = ["testsuite"] }
 quickwit-cluster = { workspace = true, features = ["testsuite"] }

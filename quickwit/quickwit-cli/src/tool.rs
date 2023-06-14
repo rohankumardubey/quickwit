@@ -46,6 +46,7 @@ use quickwit_indexing::models::{
     DetachIndexingPipeline, DetachMergePipeline, IndexingStatistics, SpawnPipeline,
 };
 use quickwit_indexing::IndexingPipeline;
+use quickwit_ingest::IngesterPool;
 use quickwit_storage::{BundleStorage, Storage};
 use thousands::Separable;
 use tracing::{debug, info};
@@ -340,6 +341,7 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
         runtimes_config,
         &HashSet::from_iter([QuickwitService::Indexer]),
     )?;
+    let ingester_pool = IngesterPool::default();
     let indexing_server = IndexingService::new(
         config.node_id.clone(),
         config.data_dir_path.clone(),
@@ -348,6 +350,7 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
         cluster,
         metastore,
         None,
+        ingester_pool,
         storage_resolver,
     )
     .await?;
@@ -435,6 +438,7 @@ pub async fn merge_cli(args: MergeArgs) -> anyhow::Result<()> {
     let indexer_config = IndexerConfig {
         ..Default::default()
     };
+    let ingester_pool = IngesterPool::default();
     let indexing_server = IndexingService::new(
         config.node_id,
         config.data_dir_path,
@@ -443,6 +447,7 @@ pub async fn merge_cli(args: MergeArgs) -> anyhow::Result<()> {
         cluster,
         metastore,
         None,
+        ingester_pool,
         storage_resolver,
     )
     .await?;

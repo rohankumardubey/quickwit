@@ -87,7 +87,10 @@ pub(crate) async fn start_rest_server(
         .and(warp::get())
         .map(metrics::metrics_handler);
 
+    let metastore = quickwit_services.metastore.clone();
     let ingest_service = quickwit_services.ingest_service.clone();
+    let ingest_router = quickwit_services.ingest_router.clone();
+    let search_service = quickwit_services.search_service.clone();
 
     // `/api/v1/*` routes.
     let api_v1_root_url = warp::path!("api" / "v1" / ..);
@@ -100,25 +103,23 @@ pub(crate) async fn start_rest_server(
         .or(indexing_get_handler(
             quickwit_services.indexing_service.clone(),
         ))
-        .or(search_get_handler(quickwit_services.search_service.clone()))
-        .or(search_post_handler(
-            quickwit_services.search_service.clone(),
+        .or(search_get_handler(search_service.clone()))
+        .or(search_post_handler(search_service.clone()))
+        .or(search_stream_handler(search_service.clone()))
+        .or(ingest_api_handlers(
+            metastore.clone(),
+            ingest_service.clone(),
+            ingest_router,
         ))
-        .or(search_stream_handler(
-            quickwit_services.search_service.clone(),
-        ))
-        .or(ingest_api_handlers(ingest_service.clone()))
         .or(index_management_handlers(
             quickwit_services.index_service.clone(),
             quickwit_services.config.clone(),
         ))
-        .or(delete_task_api_handlers(
-            quickwit_services.metastore.clone(),
-        ))
+        .or(delete_task_api_handlers(metastore))
         .or(elastic_api_handlers(
             quickwit_services.config.clone(),
-            quickwit_services.search_service.clone(),
-            ingest_service.clone(),
+            ingest_service,
+            search_service,
         ));
 
     let api_v1_root_route = api_v1_root_url.and(api_v1_routes);

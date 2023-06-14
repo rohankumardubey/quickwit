@@ -1,0 +1,113 @@
+// Copyright (C) 2023 Quickwit, Inc.
+//
+// Quickwit is offered under the AGPL v3.0 and as commercial software.
+// For commercial licensing, contact us at hello@quickwit.io.
+//
+// AGPL:
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+syntax = "proto3";
+
+package ingest_metastore;
+
+import "shard.proto";
+
+
+service IngestMetastoreService {
+    rpc GetOrCreateOpenShards(GetOrCreateOpenShardsRequest) returns (GetOrCreateOpenShardsResponse);
+
+    rpc ListShards(ListShardsRequest) returns (ListShardsResponse);
+
+    rpc RenewShardLeases(RenewShardLeasesRequest) returns (RenewShardLeasesResponse);
+}
+
+message GetOrCreateOpenShardsRequest {
+    repeated GetOrCreateOpenShardsSubrequest subrequests = 3;
+}
+
+message GetOrCreateOpenShardsSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    string leader_id = 3;
+    optional string follower_id = 4;
+}
+
+message GetOrCreateOpenShardsResponse {
+    repeated GetOrCreateOpenShardsSubresponse subresponses = 1;
+}
+
+message GetOrCreateOpenShardsSubresponse {
+    string index_uid = 1;
+    string source_id = 2;
+    repeated shard.Shard shards = 3;
+}
+
+message ListShardsRequest {
+    repeated ListShardsSubrequest subrequests = 1;
+}
+
+message ListShardsSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    optional shard.ShardState shard_state = 3;
+}
+
+message ListShardsResponse {
+    repeated ListShardsSubresponse subresponses = 1;
+}
+
+message ListShardsSubresponse {
+    string index_uid = 1;
+    string source_id = 2;
+    repeated shard.Shard shards = 3;
+}
+
+message RenewShardLeasesRequest {
+    repeated RenewShardLeasesSubrequest subrequests = 2;
+}
+
+message RenewShardLeasesSubrequest {
+    string lessee_id = 1;
+    string index_uid = 2;
+    string source_id = 3;
+    repeated uint64 shard_ids = 4;
+}
+
+message RenewShardLeasesResponse {
+    repeated RenewShardLeasesSubresponse subresponses = 1;
+}
+
+message RenewShardLeasesSubresponse {
+    string lessee_id = 1;
+    string index_uid = 2;
+    string source_id = 3;
+    repeated LeaseRenewalResult lease_renewal_results = 4;
+}
+
+message LeaseRenewalResult {
+    uint64 shard_id = 1;
+    LeaseRenewalOutcome renewal_outcome = 2;
+    optional shard.Shard shard = 3;
+    optional uint64 lease_expiration_timestamp_millis = 4;
+}
+
+enum LeaseRenewalOutcome {
+    ACQUIRED = 0;
+    RENEWED = 1;
+}
+
+enum LeaseState {
+    AVAILABLE = 0;
+    ACTIVE = 1;
+}

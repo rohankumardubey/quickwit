@@ -187,7 +187,7 @@ async fn test_cmd_ingest_on_non_existing_index() {
 
     assert_eq!(
         error.root_cause().downcast_ref::<MetastoreError>().unwrap(),
-        &MetastoreError::IndexDoesNotExist {
+        &MetastoreError::NotFound {
             index_id: "index-does-not-exist".to_string()
         }
     );
