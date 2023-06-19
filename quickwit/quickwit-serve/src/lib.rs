@@ -49,7 +49,7 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use byte_unit::n_mib_bytes;
-use format::BodyFormat;
+pub use format::BodyFormat;
 use futures::{Stream, StreamExt};
 use itertools::Itertools;
 use quickwit_actors::{ActorExitStatus, Mailbox, Universe};
@@ -91,7 +91,9 @@ pub use crate::index_api::ListSplitsQueryParams;
 pub use crate::metrics::SERVE_METRICS;
 #[cfg(test)]
 use crate::rest::recover_fn;
-pub use crate::search_api::{SearchRequestQueryString, SortByField};
+pub use crate::search_api::{
+    search_request_from_api_request, SearchRequestQueryString, SortByField,
+};
 
 const READINESS_REPORTING_INTERVAL: Duration = if cfg!(any(test, feature = "testsuite")) {
     Duration::from_millis(25)

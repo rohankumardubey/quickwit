@@ -181,11 +181,10 @@ fn get_proto_search_by(search_request: &SearchRequestQueryString) -> (Option<i32
     }
 }
 
-async fn search_endpoint(
+pub fn search_request_from_api_request(
     index_id: String,
     search_request: SearchRequestQueryString,
-    search_service: &dyn SearchService,
-) -> Result<SearchResponseRest, SearchError> {
+) -> Result<quickwit_proto::SearchRequest, SearchError> {
     let (sort_order, sort_by_field) = get_proto_search_by(&search_request);
     // The query ast below may still contain user input query. The actual
     // parsing of the user query will happen in the root service, and might require
@@ -206,6 +205,15 @@ async fn search_endpoint(
         sort_order,
         sort_by_field,
     };
+    Ok(search_request)
+}
+
+async fn search_endpoint(
+    index_id: String,
+    search_request: SearchRequestQueryString,
+    search_service: &dyn SearchService,
+) -> Result<SearchResponseRest, SearchError> {
+    let search_request = search_request_from_api_request(index_id, search_request)?;
     let search_response = search_service.root_search(search_request).await?;
     let search_response_rest = SearchResponseRest::try_from(search_response)?;
     Ok(search_response_rest)
