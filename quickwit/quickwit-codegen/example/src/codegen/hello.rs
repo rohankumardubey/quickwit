@@ -133,9 +133,83 @@ impl Hello for HelloClient {
     }
 }
 #[cfg(any(test, feature = "testsuite"))]
-impl From<MockHello> for HelloClient {
-    fn from(mock: MockHello) -> Self {
-        HelloClient::new(mock)
+pub mod mock {
+    use super::*;
+    #[derive(Debug, Clone)]
+    struct MockHelloWrapper {
+        inner: std::sync::Arc<MockHello>,
+    }
+    struct MockPtr(*mut MockHello);
+    unsafe impl Send for MockPtr {}
+    impl std::ops::Deref for MockPtr {
+        type Target = MockHello;
+        fn deref(&self) -> &Self::Target {
+            unsafe { &*self.0 }
+        }
+    }
+    impl std::ops::DerefMut for MockPtr {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe { &mut *self.0 }
+        }
+    }
+    #[async_trait::async_trait]
+    impl Hello for MockHelloWrapper {
+        async fn hello(
+            &mut self,
+            request: HelloRequest,
+        ) -> crate::HelloResult<HelloResponse> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockHello,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.hello(request).await
+            }
+                .await
+        }
+        async fn goodbye(
+            &mut self,
+            request: GoodbyeRequest,
+        ) -> crate::HelloResult<GoodbyeResponse> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockHello,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.goodbye(request).await
+            }
+                .await
+        }
+        async fn ping(
+            &mut self,
+            request: PingRequest,
+        ) -> crate::HelloResult<HelloStream<PingResponse>> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockHello,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.ping(request).await
+            }
+                .await
+        }
+    }
+    impl From<MockHello> for HelloClient {
+        fn from(mock: MockHello) -> Self {
+            let mock_wrapper = MockHelloWrapper {
+                inner: std::sync::Arc::new(mock),
+            };
+            HelloClient::new(mock_wrapper)
+        }
     }
 }
 pub type BoxFuture<T, E> = std::pin::Pin<

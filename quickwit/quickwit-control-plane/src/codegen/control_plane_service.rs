@@ -82,9 +82,51 @@ impl ControlPlaneService for ControlPlaneServiceClient {
     }
 }
 #[cfg(any(test, feature = "testsuite"))]
-impl From<MockControlPlaneService> for ControlPlaneServiceClient {
-    fn from(mock: MockControlPlaneService) -> Self {
-        ControlPlaneServiceClient::new(mock)
+pub mod mock {
+    use super::*;
+    #[derive(Debug, Clone)]
+    struct MockControlPlaneServiceWrapper {
+        inner: std::sync::Arc<MockControlPlaneService>,
+    }
+    struct MockPtr(*mut MockControlPlaneService);
+    unsafe impl Send for MockPtr {}
+    impl std::ops::Deref for MockPtr {
+        type Target = MockControlPlaneService;
+        fn deref(&self) -> &Self::Target {
+            unsafe { &*self.0 }
+        }
+    }
+    impl std::ops::DerefMut for MockPtr {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe { &mut *self.0 }
+        }
+    }
+    #[async_trait::async_trait]
+    impl ControlPlaneService for MockControlPlaneServiceWrapper {
+        async fn notify_index_change(
+            &mut self,
+            request: NotifyIndexChangeRequest,
+        ) -> crate::Result<NotifyIndexChangeResponse> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockControlPlaneService,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.notify_index_change(request).await
+            }
+                .await
+        }
+    }
+    impl From<MockControlPlaneService> for ControlPlaneServiceClient {
+        fn from(mock: MockControlPlaneService) -> Self {
+            let mock_wrapper = MockControlPlaneServiceWrapper {
+                inner: std::sync::Arc::new(mock),
+            };
+            ControlPlaneServiceClient::new(mock_wrapper)
+        }
     }
 }
 pub type BoxFuture<T, E> = std::pin::Pin<

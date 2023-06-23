@@ -190,9 +190,80 @@ impl IngestService for IngestServiceClient {
     }
 }
 #[cfg(any(test, feature = "testsuite"))]
-impl From<MockIngestService> for IngestServiceClient {
-    fn from(mock: MockIngestService) -> Self {
-        IngestServiceClient::new(mock)
+pub mod mock {
+    use super::*;
+    #[derive(Debug, Clone)]
+    struct MockIngestServiceWrapper {
+        inner: std::sync::Arc<MockIngestService>,
+    }
+    struct MockPtr(*mut MockIngestService);
+    unsafe impl Send for MockPtr {}
+    impl std::ops::Deref for MockPtr {
+        type Target = MockIngestService;
+        fn deref(&self) -> &Self::Target {
+            unsafe { &*self.0 }
+        }
+    }
+    impl std::ops::DerefMut for MockPtr {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe { &mut *self.0 }
+        }
+    }
+    #[async_trait::async_trait]
+    impl IngestService for MockIngestServiceWrapper {
+        async fn ingest(
+            &mut self,
+            request: IngestRequest,
+        ) -> crate::Result<IngestResponse> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockIngestService,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.ingest(request).await
+            }
+                .await
+        }
+        async fn fetch(
+            &mut self,
+            request: FetchRequest,
+        ) -> crate::Result<FetchResponse> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockIngestService,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.fetch(request).await
+            }
+                .await
+        }
+        async fn tail(&mut self, request: TailRequest) -> crate::Result<FetchResponse> {
+            let mock = self.inner.clone();
+            async move {
+                let mut mock_ptr = MockPtr(
+                    std::sync::Arc::into_raw(mock) as *mut MockIngestService,
+                );
+                unsafe {
+                    std::sync::Arc::decrement_strong_count(mock_ptr.0);
+                }
+                mock_ptr.tail(request).await
+            }
+                .await
+        }
+    }
+    impl From<MockIngestService> for IngestServiceClient {
+        fn from(mock: MockIngestService) -> Self {
+            let mock_wrapper = MockIngestServiceWrapper {
+                inner: std::sync::Arc::new(mock),
+            };
+            IngestServiceClient::new(mock_wrapper)
+        }
     }
 }
 pub type BoxFuture<T, E> = std::pin::Pin<
