@@ -62,6 +62,16 @@ pub enum MetastoreEvent {
         /// Source ID of the deleted source.
         source_id: String,
     },
+    /// Split published event.
+    PublishSplit {
+        /// Index ID of the deleted source.
+        index_uid: IndexUid,
+    },
+    /// Delete split event
+    DeleteSplit {
+        /// Index ID of the deleted source.
+        index_uid: IndexUid,
+    },
 }
 
 impl Event for MetastoreEvent {}
@@ -145,6 +155,10 @@ impl Metastore for MetastoreEventPublisher {
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
     ) -> MetastoreResult<()> {
+        let event = MetastoreEvent::PublishSplit {
+            index_uid: index_uid.clone(),
+        };
+
         self.underlying
             .publish_splits(
                 index_uid,
@@ -152,7 +166,9 @@ impl Metastore for MetastoreEventPublisher {
                 replaced_split_ids,
                 checkpoint_delta_opt,
             )
-            .await
+            .await?;
+        self.event_broker.publish(event);
+        Ok(())
     }
 
     async fn list_splits(&self, query: ListSplitsQuery) -> MetastoreResult<Vec<Split>> {

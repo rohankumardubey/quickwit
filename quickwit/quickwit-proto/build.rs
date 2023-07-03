@@ -26,7 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // "Classic" prost + tonic codegen for metastore and search services.
     let protos: Vec<PathBuf> = find_protos("protos/quickwit")
         .into_iter()
-        .filter(|path| !path.ends_with("control_pane.proto") || !path.ends_with("indexing.proto"))
+        .filter(|path| {
+            !path.ends_with("control_pane.proto")
+                || !path.ends_with("indexing.proto")
+                || !path.ends_with("cache_storage.proto")
+        })
         .collect();
 
     let mut prost_config = prost_build::Config::default();
@@ -74,6 +78,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "crate::indexing::IndexingError",
         &[],
         index_api_config,
+    )
+    .unwrap();
+
+    // Cache Storage Service
+    Codegen::run(
+        &["protos/quickwit/cache_storage.proto"],
+        "src/codegen/quickwit",
+        "crate::cache_storage::Result",
+        "crate::cache_storage::CacheStorageError",
+        &[],
     )
     .unwrap();
 

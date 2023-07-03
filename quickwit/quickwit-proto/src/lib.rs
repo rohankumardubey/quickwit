@@ -34,6 +34,7 @@ use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use ulid::Ulid;
 
+pub mod cache_storage;
 pub mod control_plane;
 pub mod indexing;
 #[path = "codegen/quickwit/quickwit.metastore.rs"]

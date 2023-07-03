@@ -20,14 +20,19 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use quickwit_actors::{Actor, ActorContext, ActorExitStatus, Handler, Mailbox};
-use quickwit_proto::control_plane::{NotifyIndexChangeRequest, NotifyIndexChangeResponse};
+use quickwit_proto::control_plane::{
+    NotifyIndexChangeRequest, NotifyIndexChangeResponse, NotifySplitsChangeRequest,
+    NotifySplitsChangeResponse,
+};
 use tracing::debug;
 
+use crate::cache_storage_controller::{CacheStorageController, CacheUpdateRequest};
 use crate::scheduler::IndexingScheduler;
 
 #[derive(Debug)]
 pub struct ControlPlane {
     index_scheduler_mailbox: Mailbox<IndexingScheduler>,
+    cache_storage_manager_mailbox: Mailbox<CacheStorageController>,
 }
 
 #[async_trait]
@@ -42,9 +47,13 @@ impl Actor for ControlPlane {
 }
 
 impl ControlPlane {
-    pub fn new(index_scheduler_mailbox: Mailbox<IndexingScheduler>) -> Self {
+    pub fn new(
+        index_scheduler_mailbox: Mailbox<IndexingScheduler>,
+        cache_storage_manager_mailbox: Mailbox<CacheStorageController>,
+    ) -> Self {
         Self {
             index_scheduler_mailbox,
+            cache_storage_manager_mailbox,
         }
     }
 }
@@ -63,6 +72,28 @@ impl Handler<NotifyIndexChangeRequest> for ControlPlane {
             .send_message(request)
             .await
             .context("Error sending index change notification to index scheduler.")?;
+        self.cache_storage_manager_mailbox
+            .send_message(CacheUpdateRequest {})
+            .await
+            .context("Error sending index change notification to index scheduler.")?;
         Ok(Ok(NotifyIndexChangeResponse {}))
+    }
+}
+
+#[async_trait]
+impl Handler<NotifySplitsChangeRequest> for ControlPlane {
+    type Reply = quickwit_proto::control_plane::Result<NotifySplitsChangeResponse>;
+
+    async fn handle(
+        &mut self,
+        _request: NotifySplitsChangeRequest,
+        _ctx: &ActorContext<Self>,
+    ) -> Result<Self::Reply, ActorExitStatus> {
+        debug!("Split change notification: notifying availalbe cache storage clients.");
+        self.cache_storage_manager_mailbox
+            .send_message(CacheUpdateRequest {})
+            .await
+            .context("Error sending index change notification to index scheduler.")?;
+        Ok(Ok(NotifySplitsChangeResponse {}))
     }
 }

@@ -1,52 +1,50 @@
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NotifyIndexChangeRequest {}
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NotifyIndexChangeResponse {}
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NotifySplitsChangeRequest {
-    /// / Index UID of the index that changes in the splits.
-    #[prost(string, tag = "1")]
-    pub index_uid: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "1")]
+    pub splits_change: ::prost::alloc::vec::Vec<SplitsChangeNotification>,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NotifySplitsChangeResponse {}
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SplitsChangeNotification {
+    /// / Storage uri.
+    #[prost(string, tag = "1")]
+    pub storage_uri: ::prost::alloc::string::String,
+    /// / Split ID.
+    #[prost(string, tag = "2")]
+    pub split_id: ::prost::alloc::string::String,
+}
 /// BEGIN quickwit-codegen
 use tower::{Layer, Service, ServiceExt};
 #[cfg_attr(any(test, feature = "testsuite"), mockall::automock)]
 #[async_trait::async_trait]
-pub trait ControlPlaneService: std::fmt::Debug + dyn_clone::DynClone + Send + Sync + 'static {
-    async fn notify_index_change(
-        &mut self,
-        request: NotifyIndexChangeRequest,
-    ) -> crate::control_plane::Result<NotifyIndexChangeResponse>;
+pub trait CacheStorageService: std::fmt::Debug + dyn_clone::DynClone + Send + Sync + 'static {
     async fn notify_split_change(
         &mut self,
         request: NotifySplitsChangeRequest,
-    ) -> crate::control_plane::Result<NotifySplitsChangeResponse>;
+    ) -> crate::cache_storage::Result<NotifySplitsChangeResponse>;
 }
-dyn_clone::clone_trait_object!(ControlPlaneService);
+dyn_clone::clone_trait_object!(CacheStorageService);
 #[cfg(any(test, feature = "testsuite"))]
-impl Clone for MockControlPlaneService {
+impl Clone for MockCacheStorageService {
     fn clone(&self) -> Self {
-        MockControlPlaneService::new()
+        MockCacheStorageService::new()
     }
 }
 #[derive(Debug, Clone)]
-pub struct ControlPlaneServiceClient {
-    inner: Box<dyn ControlPlaneService>,
+pub struct CacheStorageServiceClient {
+    inner: Box<dyn CacheStorageService>,
 }
-impl ControlPlaneServiceClient {
+impl CacheStorageServiceClient {
     pub fn new<T>(instance: T) -> Self
     where
-        T: ControlPlaneService,
+        T: CacheStorageService,
     {
         Self { inner: Box::new(instance) }
     }
@@ -66,9 +64,9 @@ impl ControlPlaneServiceClient {
                 >,
             > + Send + 'static,
     {
-        ControlPlaneServiceClient::new(
-            ControlPlaneServiceGrpcClientAdapter::new(
-                control_plane_service_grpc_client::ControlPlaneServiceGrpcClient::new(
+        CacheStorageServiceClient::new(
+            CacheStorageServiceGrpcClientAdapter::new(
+                cache_storage_service_grpc_client::CacheStorageServiceGrpcClient::new(
                     channel,
                 ),
             ),
@@ -77,30 +75,24 @@ impl ControlPlaneServiceClient {
     pub fn from_mailbox<A>(mailbox: quickwit_actors::Mailbox<A>) -> Self
     where
         A: quickwit_actors::Actor + std::fmt::Debug + Send + 'static,
-        ControlPlaneServiceMailbox<A>: ControlPlaneService,
+        CacheStorageServiceMailbox<A>: CacheStorageService,
     {
-        ControlPlaneServiceClient::new(ControlPlaneServiceMailbox::new(mailbox))
+        CacheStorageServiceClient::new(CacheStorageServiceMailbox::new(mailbox))
     }
-    pub fn tower() -> ControlPlaneServiceTowerBlockBuilder {
-        ControlPlaneServiceTowerBlockBuilder::default()
+    pub fn tower() -> CacheStorageServiceTowerBlockBuilder {
+        CacheStorageServiceTowerBlockBuilder::default()
     }
     #[cfg(any(test, feature = "testsuite"))]
-    pub fn mock() -> MockControlPlaneService {
-        MockControlPlaneService::new()
+    pub fn mock() -> MockCacheStorageService {
+        MockCacheStorageService::new()
     }
 }
 #[async_trait::async_trait]
-impl ControlPlaneService for ControlPlaneServiceClient {
-    async fn notify_index_change(
-        &mut self,
-        request: NotifyIndexChangeRequest,
-    ) -> crate::control_plane::Result<NotifyIndexChangeResponse> {
-        self.inner.notify_index_change(request).await
-    }
+impl CacheStorageService for CacheStorageServiceClient {
     async fn notify_split_change(
         &mut self,
         request: NotifySplitsChangeRequest,
-    ) -> crate::control_plane::Result<NotifySplitsChangeResponse> {
+    ) -> crate::cache_storage::Result<NotifySplitsChangeResponse> {
         self.inner.notify_split_change(request).await
     }
 }
@@ -108,55 +100,33 @@ impl ControlPlaneService for ControlPlaneServiceClient {
 pub mod mock {
     use super::*;
     #[derive(Debug, Clone)]
-    struct MockControlPlaneServiceWrapper {
-        inner: std::sync::Arc<tokio::sync::Mutex<MockControlPlaneService>>,
+    struct MockCacheStorageServiceWrapper {
+        inner: std::sync::Arc<tokio::sync::Mutex<MockCacheStorageService>>,
     }
     #[async_trait::async_trait]
-    impl ControlPlaneService for MockControlPlaneServiceWrapper {
-        async fn notify_index_change(
-            &mut self,
-            request: NotifyIndexChangeRequest,
-        ) -> crate::control_plane::Result<NotifyIndexChangeResponse> {
-            self.inner.lock().await.notify_index_change(request).await
-        }
+    impl CacheStorageService for MockCacheStorageServiceWrapper {
         async fn notify_split_change(
             &mut self,
             request: NotifySplitsChangeRequest,
-        ) -> crate::control_plane::Result<NotifySplitsChangeResponse> {
+        ) -> crate::cache_storage::Result<NotifySplitsChangeResponse> {
             self.inner.lock().await.notify_split_change(request).await
         }
     }
-    impl From<MockControlPlaneService> for ControlPlaneServiceClient {
-        fn from(mock: MockControlPlaneService) -> Self {
-            let mock_wrapper = MockControlPlaneServiceWrapper {
+    impl From<MockCacheStorageService> for CacheStorageServiceClient {
+        fn from(mock: MockCacheStorageService) -> Self {
+            let mock_wrapper = MockCacheStorageServiceWrapper {
                 inner: std::sync::Arc::new(tokio::sync::Mutex::new(mock)),
             };
-            ControlPlaneServiceClient::new(mock_wrapper)
+            CacheStorageServiceClient::new(mock_wrapper)
         }
     }
 }
 pub type BoxFuture<T, E> = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<T, E>> + Send + 'static>,
 >;
-impl tower::Service<NotifyIndexChangeRequest> for Box<dyn ControlPlaneService> {
-    type Response = NotifyIndexChangeResponse;
-    type Error = crate::control_plane::ControlPlaneError;
-    type Future = BoxFuture<Self::Response, Self::Error>;
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-    fn call(&mut self, request: NotifyIndexChangeRequest) -> Self::Future {
-        let mut svc = self.clone();
-        let fut = async move { svc.notify_index_change(request).await };
-        Box::pin(fut)
-    }
-}
-impl tower::Service<NotifySplitsChangeRequest> for Box<dyn ControlPlaneService> {
+impl tower::Service<NotifySplitsChangeRequest> for Box<dyn CacheStorageService> {
     type Response = NotifySplitsChangeResponse;
-    type Error = crate::control_plane::ControlPlaneError;
+    type Error = crate::cache_storage::CacheStorageError;
     type Future = BoxFuture<Self::Response, Self::Error>;
     fn poll_ready(
         &mut self,
@@ -172,114 +142,67 @@ impl tower::Service<NotifySplitsChangeRequest> for Box<dyn ControlPlaneService> 
 }
 /// A tower block is a set of towers. Each tower is stack of layers (middlewares) that are applied to a service.
 #[derive(Debug)]
-struct ControlPlaneServiceTowerBlock {
-    notify_index_change_svc: quickwit_common::tower::BoxService<
-        NotifyIndexChangeRequest,
-        NotifyIndexChangeResponse,
-        crate::control_plane::ControlPlaneError,
-    >,
+struct CacheStorageServiceTowerBlock {
     notify_split_change_svc: quickwit_common::tower::BoxService<
         NotifySplitsChangeRequest,
         NotifySplitsChangeResponse,
-        crate::control_plane::ControlPlaneError,
+        crate::cache_storage::CacheStorageError,
     >,
 }
-impl Clone for ControlPlaneServiceTowerBlock {
+impl Clone for CacheStorageServiceTowerBlock {
     fn clone(&self) -> Self {
         Self {
-            notify_index_change_svc: self.notify_index_change_svc.clone(),
             notify_split_change_svc: self.notify_split_change_svc.clone(),
         }
     }
 }
 #[async_trait::async_trait]
-impl ControlPlaneService for ControlPlaneServiceTowerBlock {
-    async fn notify_index_change(
-        &mut self,
-        request: NotifyIndexChangeRequest,
-    ) -> crate::control_plane::Result<NotifyIndexChangeResponse> {
-        self.notify_index_change_svc.ready().await?.call(request).await
-    }
+impl CacheStorageService for CacheStorageServiceTowerBlock {
     async fn notify_split_change(
         &mut self,
         request: NotifySplitsChangeRequest,
-    ) -> crate::control_plane::Result<NotifySplitsChangeResponse> {
+    ) -> crate::cache_storage::Result<NotifySplitsChangeResponse> {
         self.notify_split_change_svc.ready().await?.call(request).await
     }
 }
 #[derive(Debug, Default)]
-pub struct ControlPlaneServiceTowerBlockBuilder {
-    #[allow(clippy::type_complexity)]
-    notify_index_change_layer: Option<
-        quickwit_common::tower::BoxLayer<
-            Box<dyn ControlPlaneService>,
-            NotifyIndexChangeRequest,
-            NotifyIndexChangeResponse,
-            crate::control_plane::ControlPlaneError,
-        >,
-    >,
+pub struct CacheStorageServiceTowerBlockBuilder {
     #[allow(clippy::type_complexity)]
     notify_split_change_layer: Option<
         quickwit_common::tower::BoxLayer<
-            Box<dyn ControlPlaneService>,
+            Box<dyn CacheStorageService>,
             NotifySplitsChangeRequest,
             NotifySplitsChangeResponse,
-            crate::control_plane::ControlPlaneError,
+            crate::cache_storage::CacheStorageError,
         >,
     >,
 }
-impl ControlPlaneServiceTowerBlockBuilder {
+impl CacheStorageServiceTowerBlockBuilder {
     pub fn shared_layer<L>(mut self, layer: L) -> Self
     where
-        L: tower::Layer<Box<dyn ControlPlaneService>> + Clone + Send + Sync + 'static,
-        L::Service: tower::Service<
-                NotifyIndexChangeRequest,
-                Response = NotifyIndexChangeResponse,
-                Error = crate::control_plane::ControlPlaneError,
-            > + Clone + Send + Sync + 'static,
-        <L::Service as tower::Service<NotifyIndexChangeRequest>>::Future: Send + 'static,
+        L: tower::Layer<Box<dyn CacheStorageService>> + Clone + Send + Sync + 'static,
         L::Service: tower::Service<
                 NotifySplitsChangeRequest,
                 Response = NotifySplitsChangeResponse,
-                Error = crate::control_plane::ControlPlaneError,
+                Error = crate::cache_storage::CacheStorageError,
             > + Clone + Send + Sync + 'static,
         <L::Service as tower::Service<
             NotifySplitsChangeRequest,
         >>::Future: Send + 'static,
     {
         self
-            .notify_index_change_layer = Some(
-            quickwit_common::tower::BoxLayer::new(layer.clone()),
-        );
-        self
             .notify_split_change_layer = Some(
-            quickwit_common::tower::BoxLayer::new(layer),
-        );
-        self
-    }
-    pub fn notify_index_change_layer<L>(mut self, layer: L) -> Self
-    where
-        L: tower::Layer<Box<dyn ControlPlaneService>> + Send + Sync + 'static,
-        L::Service: tower::Service<
-                NotifyIndexChangeRequest,
-                Response = NotifyIndexChangeResponse,
-                Error = crate::control_plane::ControlPlaneError,
-            > + Clone + Send + Sync + 'static,
-        <L::Service as tower::Service<NotifyIndexChangeRequest>>::Future: Send + 'static,
-    {
-        self
-            .notify_index_change_layer = Some(
             quickwit_common::tower::BoxLayer::new(layer),
         );
         self
     }
     pub fn notify_split_change_layer<L>(mut self, layer: L) -> Self
     where
-        L: tower::Layer<Box<dyn ControlPlaneService>> + Send + Sync + 'static,
+        L: tower::Layer<Box<dyn CacheStorageService>> + Send + Sync + 'static,
         L::Service: tower::Service<
                 NotifySplitsChangeRequest,
                 Response = NotifySplitsChangeResponse,
-                Error = crate::control_plane::ControlPlaneError,
+                Error = crate::cache_storage::CacheStorageError,
             > + Clone + Send + Sync + 'static,
         <L::Service as tower::Service<
             NotifySplitsChangeRequest,
@@ -291,13 +214,13 @@ impl ControlPlaneServiceTowerBlockBuilder {
         );
         self
     }
-    pub fn build<T>(self, instance: T) -> ControlPlaneServiceClient
+    pub fn build<T>(self, instance: T) -> CacheStorageServiceClient
     where
-        T: ControlPlaneService,
+        T: CacheStorageService,
     {
         self.build_from_boxed(Box::new(instance))
     }
-    pub fn build_from_channel<T, C>(self, channel: C) -> ControlPlaneServiceClient
+    pub fn build_from_channel<T, C>(self, channel: C) -> CacheStorageServiceClient
     where
         C: tower::Service<
                 http::Request<tonic::body::BoxBody>,
@@ -313,39 +236,32 @@ impl ControlPlaneServiceTowerBlockBuilder {
                 >,
             > + Send + 'static,
     {
-        self.build_from_boxed(Box::new(ControlPlaneServiceClient::from_channel(channel)))
+        self.build_from_boxed(Box::new(CacheStorageServiceClient::from_channel(channel)))
     }
     pub fn build_from_mailbox<A>(
         self,
         mailbox: quickwit_actors::Mailbox<A>,
-    ) -> ControlPlaneServiceClient
+    ) -> CacheStorageServiceClient
     where
         A: quickwit_actors::Actor + std::fmt::Debug + Send + 'static,
-        ControlPlaneServiceMailbox<A>: ControlPlaneService,
+        CacheStorageServiceMailbox<A>: CacheStorageService,
     {
-        self.build_from_boxed(Box::new(ControlPlaneServiceClient::from_mailbox(mailbox)))
+        self.build_from_boxed(Box::new(CacheStorageServiceClient::from_mailbox(mailbox)))
     }
     fn build_from_boxed(
         self,
-        boxed_instance: Box<dyn ControlPlaneService>,
-    ) -> ControlPlaneServiceClient {
-        let notify_index_change_svc = if let Some(layer) = self.notify_index_change_layer
-        {
-            layer.layer(boxed_instance.clone())
-        } else {
-            quickwit_common::tower::BoxService::new(boxed_instance.clone())
-        };
+        boxed_instance: Box<dyn CacheStorageService>,
+    ) -> CacheStorageServiceClient {
         let notify_split_change_svc = if let Some(layer) = self.notify_split_change_layer
         {
             layer.layer(boxed_instance.clone())
         } else {
             quickwit_common::tower::BoxService::new(boxed_instance.clone())
         };
-        let tower_block = ControlPlaneServiceTowerBlock {
-            notify_index_change_svc,
+        let tower_block = CacheStorageServiceTowerBlock {
             notify_split_change_svc,
         };
-        ControlPlaneServiceClient::new(tower_block)
+        CacheStorageServiceClient::new(tower_block)
     }
 }
 #[derive(Debug, Clone)]
@@ -363,10 +279,10 @@ where
     }
 }
 #[derive(Debug)]
-pub struct ControlPlaneServiceMailbox<A: quickwit_actors::Actor> {
-    inner: MailboxAdapter<A, crate::control_plane::ControlPlaneError>,
+pub struct CacheStorageServiceMailbox<A: quickwit_actors::Actor> {
+    inner: MailboxAdapter<A, crate::cache_storage::CacheStorageError>,
 }
-impl<A: quickwit_actors::Actor> ControlPlaneServiceMailbox<A> {
+impl<A: quickwit_actors::Actor> CacheStorageServiceMailbox<A> {
     pub fn new(instance: quickwit_actors::Mailbox<A>) -> Self {
         let inner = MailboxAdapter {
             inner: instance,
@@ -375,7 +291,7 @@ impl<A: quickwit_actors::Actor> ControlPlaneServiceMailbox<A> {
         Self { inner }
     }
 }
-impl<A: quickwit_actors::Actor> Clone for ControlPlaneServiceMailbox<A> {
+impl<A: quickwit_actors::Actor> Clone for CacheStorageServiceMailbox<A> {
     fn clone(&self) -> Self {
         let inner = MailboxAdapter {
             inner: self.inner.clone(),
@@ -384,7 +300,7 @@ impl<A: quickwit_actors::Actor> Clone for ControlPlaneServiceMailbox<A> {
         Self { inner }
     }
 }
-impl<A, M, T, E> tower::Service<M> for ControlPlaneServiceMailbox<A>
+impl<A, M, T, E> tower::Service<M> for CacheStorageServiceMailbox<A>
 where
     A: quickwit_actors::Actor
         + quickwit_actors::DeferableReplyHandler<M, Reply = Result<T, E>> + Send
@@ -392,10 +308,10 @@ where
     M: std::fmt::Debug + Send + 'static,
     T: Send + 'static,
     E: std::fmt::Debug + Send + 'static,
-    crate::control_plane::ControlPlaneError: From<quickwit_actors::AskError<E>>,
+    crate::cache_storage::CacheStorageError: From<quickwit_actors::AskError<E>>,
 {
     type Response = T;
-    type Error = crate::control_plane::ControlPlaneError;
+    type Error = crate::cache_storage::CacheStorageError;
     type Future = BoxFuture<Self::Response, Self::Error>;
     fn poll_ready(
         &mut self,
@@ -415,56 +331,41 @@ where
     }
 }
 #[async_trait::async_trait]
-impl<A> ControlPlaneService for ControlPlaneServiceMailbox<A>
+impl<A> CacheStorageService for CacheStorageServiceMailbox<A>
 where
     A: quickwit_actors::Actor + std::fmt::Debug,
-    ControlPlaneServiceMailbox<
+    CacheStorageServiceMailbox<
         A,
     >: tower::Service<
-            NotifyIndexChangeRequest,
-            Response = NotifyIndexChangeResponse,
-            Error = crate::control_plane::ControlPlaneError,
-            Future = BoxFuture<
-                NotifyIndexChangeResponse,
-                crate::control_plane::ControlPlaneError,
-            >,
-        >
-        + tower::Service<
-            NotifySplitsChangeRequest,
-            Response = NotifySplitsChangeResponse,
-            Error = crate::control_plane::ControlPlaneError,
-            Future = BoxFuture<
-                NotifySplitsChangeResponse,
-                crate::control_plane::ControlPlaneError,
-            >,
+        NotifySplitsChangeRequest,
+        Response = NotifySplitsChangeResponse,
+        Error = crate::cache_storage::CacheStorageError,
+        Future = BoxFuture<
+            NotifySplitsChangeResponse,
+            crate::cache_storage::CacheStorageError,
         >,
+    >,
 {
-    async fn notify_index_change(
-        &mut self,
-        request: NotifyIndexChangeRequest,
-    ) -> crate::control_plane::Result<NotifyIndexChangeResponse> {
-        self.call(request).await
-    }
     async fn notify_split_change(
         &mut self,
         request: NotifySplitsChangeRequest,
-    ) -> crate::control_plane::Result<NotifySplitsChangeResponse> {
+    ) -> crate::cache_storage::Result<NotifySplitsChangeResponse> {
         self.call(request).await
     }
 }
 #[derive(Debug, Clone)]
-pub struct ControlPlaneServiceGrpcClientAdapter<T> {
+pub struct CacheStorageServiceGrpcClientAdapter<T> {
     inner: T,
 }
-impl<T> ControlPlaneServiceGrpcClientAdapter<T> {
+impl<T> CacheStorageServiceGrpcClientAdapter<T> {
     pub fn new(instance: T) -> Self {
         Self { inner: instance }
     }
 }
 #[async_trait::async_trait]
-impl<T> ControlPlaneService
-for ControlPlaneServiceGrpcClientAdapter<
-    control_plane_service_grpc_client::ControlPlaneServiceGrpcClient<T>,
+impl<T> CacheStorageService
+for CacheStorageServiceGrpcClientAdapter<
+    cache_storage_service_grpc_client::CacheStorageServiceGrpcClient<T>,
 >
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody> + std::fmt::Debug + Clone + Send
@@ -474,20 +375,10 @@ where
         + Send,
     T::Future: Send,
 {
-    async fn notify_index_change(
-        &mut self,
-        request: NotifyIndexChangeRequest,
-    ) -> crate::control_plane::Result<NotifyIndexChangeResponse> {
-        self.inner
-            .notify_index_change(request)
-            .await
-            .map(|response| response.into_inner())
-            .map_err(|error| error.into())
-    }
     async fn notify_split_change(
         &mut self,
         request: NotifySplitsChangeRequest,
-    ) -> crate::control_plane::Result<NotifySplitsChangeResponse> {
+    ) -> crate::cache_storage::Result<NotifySplitsChangeResponse> {
         self.inner
             .notify_split_change(request)
             .await
@@ -496,31 +387,20 @@ where
     }
 }
 #[derive(Debug)]
-pub struct ControlPlaneServiceGrpcServerAdapter {
-    inner: Box<dyn ControlPlaneService>,
+pub struct CacheStorageServiceGrpcServerAdapter {
+    inner: Box<dyn CacheStorageService>,
 }
-impl ControlPlaneServiceGrpcServerAdapter {
+impl CacheStorageServiceGrpcServerAdapter {
     pub fn new<T>(instance: T) -> Self
     where
-        T: ControlPlaneService,
+        T: CacheStorageService,
     {
         Self { inner: Box::new(instance) }
     }
 }
 #[async_trait::async_trait]
-impl control_plane_service_grpc_server::ControlPlaneServiceGrpc
-for ControlPlaneServiceGrpcServerAdapter {
-    async fn notify_index_change(
-        &self,
-        request: tonic::Request<NotifyIndexChangeRequest>,
-    ) -> Result<tonic::Response<NotifyIndexChangeResponse>, tonic::Status> {
-        self.inner
-            .clone()
-            .notify_index_change(request.into_inner())
-            .await
-            .map(tonic::Response::new)
-            .map_err(|error| error.into())
-    }
+impl cache_storage_service_grpc_server::CacheStorageServiceGrpc
+for CacheStorageServiceGrpcServerAdapter {
     async fn notify_split_change(
         &self,
         request: tonic::Request<NotifySplitsChangeRequest>,
@@ -534,15 +414,15 @@ for ControlPlaneServiceGrpcServerAdapter {
     }
 }
 /// Generated client implementations.
-pub mod control_plane_service_grpc_client {
+pub mod cache_storage_service_grpc_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
-    pub struct ControlPlaneServiceGrpcClient<T> {
+    pub struct CacheStorageServiceGrpcClient<T> {
         inner: tonic::client::Grpc<T>,
     }
-    impl ControlPlaneServiceGrpcClient<tonic::transport::Channel> {
+    impl CacheStorageServiceGrpcClient<tonic::transport::Channel> {
         /// Attempt to create a new client by connecting to a given endpoint.
         pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
         where
@@ -553,7 +433,7 @@ pub mod control_plane_service_grpc_client {
             Ok(Self::new(conn))
         }
     }
-    impl<T> ControlPlaneServiceGrpcClient<T>
+    impl<T> CacheStorageServiceGrpcClient<T>
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody>,
         T::Error: Into<StdError>,
@@ -571,7 +451,7 @@ pub mod control_plane_service_grpc_client {
         pub fn with_interceptor<F>(
             inner: T,
             interceptor: F,
-        ) -> ControlPlaneServiceGrpcClient<InterceptedService<T, F>>
+        ) -> CacheStorageServiceGrpcClient<InterceptedService<T, F>>
         where
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
@@ -585,7 +465,7 @@ pub mod control_plane_service_grpc_client {
                 http::Request<tonic::body::BoxBody>,
             >>::Error: Into<StdError> + Send + Sync,
         {
-            ControlPlaneServiceGrpcClient::new(
+            CacheStorageServiceGrpcClient::new(
                 InterceptedService::new(inner, interceptor),
             )
         }
@@ -620,42 +500,7 @@ pub mod control_plane_service_grpc_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
-        /// / Notify the Control Plane that a change on an index occurred. The change
-        /// / can be an index creation, deletion, or update that includes a source creation/deletion/num pipeline update.
-        /// Note(fmassot): it's not very clear for a user to know which change triggers a control plane notification.
-        /// This can be explicited in the attributes of `NotifyIndexChangeRequest` with an enum that describes the
-        /// type of change. The index ID and/or source ID could also be added.
-        /// However, these attributes will not be used by the Control Plane, at least at short term.
-        pub async fn notify_index_change(
-            &mut self,
-            request: impl tonic::IntoRequest<super::NotifyIndexChangeRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::NotifyIndexChangeResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/quickwit.control_plane.ControlPlaneService/notifyIndexChange",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new(
-                        "quickwit.control_plane.ControlPlaneService",
-                        "notifyIndexChange",
-                    ),
-                );
-            self.inner.unary(req, path, codec).await
-        }
+        /// / Apply an indexing plan on the node.
         pub async fn notify_split_change(
             &mut self,
             request: impl tonic::IntoRequest<super::NotifySplitsChangeRequest>,
@@ -674,13 +519,13 @@ pub mod control_plane_service_grpc_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/quickwit.control_plane.ControlPlaneService/notifySplitChange",
+                "/quickwit.cache_storage.CacheStorageService/notifySplitChange",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new(
-                        "quickwit.control_plane.ControlPlaneService",
+                        "quickwit.cache_storage.CacheStorageService",
                         "notifySplitChange",
                     ),
                 );
@@ -689,25 +534,13 @@ pub mod control_plane_service_grpc_client {
     }
 }
 /// Generated server implementations.
-pub mod control_plane_service_grpc_server {
+pub mod cache_storage_service_grpc_server {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
     use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with ControlPlaneServiceGrpcServer.
+    /// Generated trait containing gRPC methods that should be implemented for use with CacheStorageServiceGrpcServer.
     #[async_trait]
-    pub trait ControlPlaneServiceGrpc: Send + Sync + 'static {
-        /// / Notify the Control Plane that a change on an index occurred. The change
-        /// / can be an index creation, deletion, or update that includes a source creation/deletion/num pipeline update.
-        /// Note(fmassot): it's not very clear for a user to know which change triggers a control plane notification.
-        /// This can be explicited in the attributes of `NotifyIndexChangeRequest` with an enum that describes the
-        /// type of change. The index ID and/or source ID could also be added.
-        /// However, these attributes will not be used by the Control Plane, at least at short term.
-        async fn notify_index_change(
-            &self,
-            request: tonic::Request<super::NotifyIndexChangeRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::NotifyIndexChangeResponse>,
-            tonic::Status,
-        >;
+    pub trait CacheStorageServiceGrpc: Send + Sync + 'static {
+        /// / Apply an indexing plan on the node.
         async fn notify_split_change(
             &self,
             request: tonic::Request<super::NotifySplitsChangeRequest>,
@@ -717,7 +550,7 @@ pub mod control_plane_service_grpc_server {
         >;
     }
     #[derive(Debug)]
-    pub struct ControlPlaneServiceGrpcServer<T: ControlPlaneServiceGrpc> {
+    pub struct CacheStorageServiceGrpcServer<T: CacheStorageServiceGrpc> {
         inner: _Inner<T>,
         accept_compression_encodings: EnabledCompressionEncodings,
         send_compression_encodings: EnabledCompressionEncodings,
@@ -725,7 +558,7 @@ pub mod control_plane_service_grpc_server {
         max_encoding_message_size: Option<usize>,
     }
     struct _Inner<T>(Arc<T>);
-    impl<T: ControlPlaneServiceGrpc> ControlPlaneServiceGrpcServer<T> {
+    impl<T: CacheStorageServiceGrpc> CacheStorageServiceGrpcServer<T> {
         pub fn new(inner: T) -> Self {
             Self::from_arc(Arc::new(inner))
         }
@@ -778,9 +611,9 @@ pub mod control_plane_service_grpc_server {
         }
     }
     impl<T, B> tonic::codegen::Service<http::Request<B>>
-    for ControlPlaneServiceGrpcServer<T>
+    for CacheStorageServiceGrpcServer<T>
     where
-        T: ControlPlaneServiceGrpc,
+        T: CacheStorageServiceGrpc,
         B: Body + Send + 'static,
         B::Error: Into<StdError> + Send + 'static,
     {
@@ -796,57 +629,11 @@ pub mod control_plane_service_grpc_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/quickwit.control_plane.ControlPlaneService/notifyIndexChange" => {
+                "/quickwit.cache_storage.CacheStorageService/notifySplitChange" => {
                     #[allow(non_camel_case_types)]
-                    struct notifyIndexChangeSvc<T: ControlPlaneServiceGrpc>(pub Arc<T>);
+                    struct notifySplitChangeSvc<T: CacheStorageServiceGrpc>(pub Arc<T>);
                     impl<
-                        T: ControlPlaneServiceGrpc,
-                    > tonic::server::UnaryService<super::NotifyIndexChangeRequest>
-                    for notifyIndexChangeSvc<T> {
-                        type Response = super::NotifyIndexChangeResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::NotifyIndexChangeRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                (*inner).notify_index_change(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = notifyIndexChangeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/quickwit.control_plane.ControlPlaneService/notifySplitChange" => {
-                    #[allow(non_camel_case_types)]
-                    struct notifySplitChangeSvc<T: ControlPlaneServiceGrpc>(pub Arc<T>);
-                    impl<
-                        T: ControlPlaneServiceGrpc,
+                        T: CacheStorageServiceGrpc,
                     > tonic::server::UnaryService<super::NotifySplitsChangeRequest>
                     for notifySplitChangeSvc<T> {
                         type Response = super::NotifySplitsChangeResponse;
@@ -903,7 +690,7 @@ pub mod control_plane_service_grpc_server {
             }
         }
     }
-    impl<T: ControlPlaneServiceGrpc> Clone for ControlPlaneServiceGrpcServer<T> {
+    impl<T: CacheStorageServiceGrpc> Clone for CacheStorageServiceGrpcServer<T> {
         fn clone(&self) -> Self {
             let inner = self.inner.clone();
             Self {
@@ -915,7 +702,7 @@ pub mod control_plane_service_grpc_server {
             }
         }
     }
-    impl<T: ControlPlaneServiceGrpc> Clone for _Inner<T> {
+    impl<T: CacheStorageServiceGrpc> Clone for _Inner<T> {
         fn clone(&self) -> Self {
             Self(Arc::clone(&self.0))
         }
@@ -925,8 +712,8 @@ pub mod control_plane_service_grpc_server {
             write!(f, "{:?}", self.0)
         }
     }
-    impl<T: ControlPlaneServiceGrpc> tonic::server::NamedService
-    for ControlPlaneServiceGrpcServer<T> {
-        const NAME: &'static str = "quickwit.control_plane.ControlPlaneService";
+    impl<T: CacheStorageServiceGrpc> tonic::server::NamedService
+    for CacheStorageServiceGrpcServer<T> {
+        const NAME: &'static str = "quickwit.cache_storage.CacheStorageService";
     }
 }
