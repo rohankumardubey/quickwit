@@ -57,7 +57,7 @@ impl Split {
 /// Carries immutable split metadata.
 /// This struct can deserialize older format automatically
 /// but can only serialize to the last version.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(into = "VersionedSplitMetadata")]
 #[serde(try_from = "VersionedSplitMetadata")]
 pub struct SplitMetadata {

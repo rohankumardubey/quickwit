@@ -152,7 +152,7 @@ impl IndexCheckpoint {
     /// See [`SourceCheckpoint::try_apply_delta`] for more details.
     pub fn try_apply_delta(
         &mut self,
-        delta: IndexCheckpointDelta,
+        delta: SourceCheckpointDelta,
     ) -> Result<bool, IncompatibleCheckpointDelta> {
         if delta.is_empty() {
             return Ok(false);
@@ -160,7 +160,7 @@ impl IndexCheckpoint {
         self.per_source
             .entry(delta.source_id)
             .or_default()
-            .try_apply_delta(delta.source_delta)?;
+            .try_apply_delta(delta)?;
         Ok(true)
     }
 
@@ -208,6 +208,18 @@ pub struct SourceCheckpoint {
 }
 
 impl SourceCheckpoint {
+    pub fn try_with_partition_delta(
+        partition_id: PartitionId,
+        from_position: Position,
+        to_position: Position,
+    ) -> Self {
+        let mut checkpoint = SourceCheckpoint::default();
+        let delta =
+            SourceCheckpointDelta::from_partition_delta(partition_id, from_position, to_position);
+        checkpoint.try_apply_delta(delta).unwrap();
+        checkpoint
+    }
+
     /// Returns the number of partitions covered by the checkpoint.
     pub fn num_partitions(&self) -> usize {
         self.per_partition.len()
@@ -399,36 +411,10 @@ struct PartitionDelta {
 /// partition not only a new position, but also an expected
 /// `from` position. This makes it possible to defensively check that
 /// we are not trying to add documents to the index that were already indexed.
-#[derive(Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceCheckpointDelta {
-    per_partition: BTreeMap<PartitionId, PartitionDelta>,
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IndexCheckpointDelta {
     pub source_id: String,
-    pub source_delta: SourceCheckpointDelta,
-}
-
-impl IndexCheckpointDelta {
-    pub fn is_empty(&self) -> bool {
-        self.source_delta.is_empty()
-    }
-
-    #[cfg(any(test, feature = "testsuite"))]
-    pub fn for_test(source_id: &str, pos_range: Range<u64>) -> Self {
-        IndexCheckpointDelta {
-            source_id: source_id.to_string(),
-            source_delta: SourceCheckpointDelta::from_range(pos_range),
-        }
-    }
-}
-
-impl fmt::Debug for IndexCheckpointDelta {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{:?}", &self.source_id, self.source_delta)?;
-        Ok(())
-    }
+    per_partition: BTreeMap<PartitionId, PartitionDelta>,
 }
 
 impl fmt::Debug for SourceCheckpointDelta {
@@ -451,53 +437,31 @@ impl fmt::Debug for SourceCheckpointDelta {
     }
 }
 
-impl TryFrom<Range<u64>> for SourceCheckpointDelta {
-    type Error = PartitionDeltaError;
-
-    fn try_from(range: Range<u64>) -> Result<Self, Self::Error> {
-        // Checkpoint delta are expressed as (from, to] intervals while ranges
-        // are [start, end) intervals
-        let from_position = if range.start == 0 {
-            Position::Beginning
-        } else {
-            Position::from(range.start - 1)
-        };
-        let to_position = if range.end == 0 {
-            Position::Beginning
-        } else {
-            Position::from(range.end - 1)
-        };
-        SourceCheckpointDelta::from_partition_delta(
-            PartitionId::default(),
-            from_position,
-            to_position,
-        )
-    }
-}
-
 impl SourceCheckpointDelta {
     /// Used for tests only.
     /// Panics if the range is not strictly increasing.
     #[cfg(any(test, feature = "testsuite"))]
-    pub fn from_range(range: Range<u64>) -> Self {
-        SourceCheckpointDelta::try_from(range).expect("Invalid position range")
+    pub fn for_test(source_id: &str, range: Range<u64>) -> Self {
+        unimplemented!()
     }
 
-    /// Creates a new checkpoint delta initialized with a single partition delta.
-    pub fn from_partition_delta(
-        partition_id: PartitionId,
-        from_position: Position,
-        to_position: Position,
-    ) -> Result<Self, PartitionDeltaError> {
-        let mut delta = SourceCheckpointDelta::default();
-        delta.record_partition_delta(partition_id, from_position, to_position)?;
-        Ok(delta)
-    }
+    // /// Creates a new checkpoint delta initialized with a single partition delta.
+    // pub fn from_partition_delta(
+    //     partition_id: PartitionId,
+    //     from_position: Position,
+    //     to_position: Position,
+    // ) -> Result<Self, PartitionDeltaError> {
+    //     let mut delta = SourceCheckpointDelta::default();
+    //     delta.record_partition_delta(partition_id, from_position, to_position)?;
+    //     Ok(delta)
+    // }
 
     /// Returns the checkpoint associated with the endpoint of the delta.
-    pub fn get_source_checkpoint(&self) -> SourceCheckpoint {
+    pub fn as_source_checkpoint(&self) -> SourceCheckpoint {
         let mut source_checkpoint = SourceCheckpoint::default();
-        source_checkpoint.try_apply_delta(self.clone()).unwrap();
+        source_checkpoint
+            .try_apply_delta(self.clone())
+            .expect("Applying a delta onto self should not fail.");
         source_checkpoint
     }
 
@@ -565,6 +529,31 @@ impl SourceCheckpointDelta {
         self.per_partition.is_empty()
     }
 }
+
+// impl TryFrom<Range<u64>> for PartitionDelta {
+//     type Error = PartitionDeltaError;
+
+//     fn try_from(range: Range<u64>) -> Result<Self, Self::Error> {
+//         // Checkpoint delta are expressed as (from, to] intervals while ranges
+//         // are [start, end) intervals
+//         let from_position = if range.start == 0 {
+//             Position::Beginning
+//         } else {
+//             Position::from(range.start - 1)
+//         };
+//         let to_position = if range.end == 0 {
+//             Position::Beginning
+//         } else {
+//             Position::from(range.end - 1)
+//         };
+//         let partition_delta = Self {
+//             PartitionId::default(),
+//             from_position,
+//             to_position,
+//         };
+//         Ok(partition_delta)
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

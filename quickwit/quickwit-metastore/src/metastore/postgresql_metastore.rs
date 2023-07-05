@@ -40,7 +40,7 @@ use tokio::sync::Mutex;
 use tracing::log::LevelFilter;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::SourceCheckpointDelta;
 use crate::metastore::instrumented_metastore::InstrumentedMetastore;
 use crate::metastore::postgresql_model::{
     DeleteTask as PgDeleteTask, Index as PgIndex, Split as PgSplit,
@@ -561,7 +561,7 @@ impl Metastore for PostgresqlMetastore {
         index_uid: IndexUid,
         staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()> {
         run_with_tx!(self.connection_pool, tx, {
             let mut index_metadata = index_metadata(tx, index_uid.index_id()).await?;
@@ -570,11 +570,9 @@ impl Metastore for PostgresqlMetastore {
                     index_id: index_uid.index_id().to_string(),
                 });
             }
-            if let Some(checkpoint_delta) = checkpoint_delta_opt {
-                index_metadata
-                    .checkpoint
-                    .try_apply_delta(checkpoint_delta)?;
-            }
+            index_metadata
+                .checkpoint
+                .try_apply_delta(checkpoint_delta)?;
             let index_metadata_json = serde_json::to_string(&index_metadata).map_err(|error| {
                 MetastoreError::JsonSerializeError {
                     struct_name: "IndexMetadata".to_string(),

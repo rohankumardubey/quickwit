@@ -35,7 +35,7 @@ use serialize::VersionedFileBackedIndex;
 use time::OffsetDateTime;
 use tracing::{info, warn};
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, SourceCheckpointDelta};
 use crate::{
     split_tag_filter, IndexMetadata, ListSplitsQuery, MetastoreError, MetastoreResult, Split,
     SplitMetadata, SplitState,
@@ -303,11 +303,9 @@ impl FileBackedIndex {
         &mut self,
         split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()> {
-        if let Some(checkpoint_delta) = checkpoint_delta_opt {
-            self.metadata.checkpoint.try_apply_delta(checkpoint_delta)?;
-        }
+        self.metadata.checkpoint.try_apply_delta(checkpoint_delta)?;
         self.mark_splits_as_published_helper(split_ids)?;
         self.mark_splits_for_deletion(replaced_split_ids, &[SplitState::Published], true)?;
         Ok(())

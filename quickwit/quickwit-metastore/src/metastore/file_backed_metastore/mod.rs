@@ -46,7 +46,7 @@ use self::store_operations::{
     check_indexes_states_exist, delete_index, fetch_index, fetch_or_init_indexes_states,
     index_exists, put_index, put_indexes_states,
 };
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::SourceCheckpointDelta;
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, Split,
     SplitMetadata, SplitState,
@@ -451,10 +451,10 @@ impl Metastore for FileBackedMetastore {
         index_uid: IndexUid,
         split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()> {
         self.mutate(index_uid, |index| {
-            index.publish_splits(split_ids, replaced_split_ids, checkpoint_delta_opt)?;
+            index.publish_splits(split_ids, replaced_split_ids, checkpoint_delta)?;
             Ok(MutationOccurred::Yes(()))
         })
         .await?;
@@ -849,7 +849,12 @@ mod tests {
 
         // publish split fails
         let err = metastore
-            .publish_splits(index_uid.clone(), &[split_id], &[], None)
+            .publish_splits(
+                index_uid.clone(),
+                &[split_id],
+                &[],
+                SourceCheckpointDelta::for_test("test-source", 0..10),
+            )
             .await;
         assert!(err.is_err());
 
@@ -1029,7 +1034,12 @@ mod tests {
                     // publish split
                     let split_id = format!("split-{i}");
                     metastore
-                        .publish_splits(index_uid.clone(), &[&split_id], &[], None)
+                        .publish_splits(
+                            index_uid.clone(),
+                            &[&split_id],
+                            &[],
+                            SourceCheckpointDelta::for_test("test-source", 0..10),
+                        )
                         .await
                         .unwrap();
                 }

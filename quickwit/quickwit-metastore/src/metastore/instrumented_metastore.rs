@@ -23,7 +23,7 @@ use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 use quickwit_proto::IndexUid;
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, SourceCheckpointDelta};
 use crate::{IndexMetadata, ListSplitsQuery, Metastore, MetastoreResult, Split, SplitMetadata};
 
 macro_rules! instrument {
@@ -140,7 +140,7 @@ impl Metastore for InstrumentedMetastore {
         index_uid: IndexUid,
         split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()> {
         instrument!(
             self.underlying
@@ -148,7 +148,7 @@ impl Metastore for InstrumentedMetastore {
                     index_uid.clone(),
                     split_ids,
                     replaced_split_ids,
-                    checkpoint_delta_opt,
+                    checkpoint_delta,
                 )
                 .await,
             [publish_splits, index_uid.index_id()]

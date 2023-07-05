@@ -30,7 +30,7 @@ use serialize::VersionedIndexMetadata;
 use time::OffsetDateTime;
 
 use crate::checkpoint::{
-    IndexCheckpoint, PartitionId, Position, SourceCheckpoint, SourceCheckpointDelta,
+    self, IndexCheckpoint, PartitionId, Position, SourceCheckpoint, SourceCheckpointDelta,
 };
 use crate::{MetastoreError, MetastoreResult};
 
@@ -130,17 +130,18 @@ impl IndexMetadata {
 
 impl TestableForRegression for IndexMetadata {
     fn sample_for_regression() -> IndexMetadata {
-        let mut source_checkpoint = SourceCheckpoint::default();
-        let delta = SourceCheckpointDelta::from_partition_delta(
-            PartitionId::from(0i64),
-            Position::Beginning,
-            Position::from(42u64),
-        )
-        .unwrap();
-        source_checkpoint.try_apply_delta(delta).unwrap();
-        let mut per_source_checkpoint: BTreeMap<String, SourceCheckpoint> = BTreeMap::default();
-        per_source_checkpoint.insert("kafka-source".to_string(), source_checkpoint);
-        let checkpoint = IndexCheckpoint::from(per_source_checkpoint);
+        // let mut source_checkpoint = SourceCheckpoint::default();
+        // let delta = SourceCheckpointDelta::from_partition_delta(
+        //     PartitionId::from(0i64),
+        //     Position::Beginning,
+        //     Position::from(42u64),
+        // )
+        // .unwrap();
+        // source_checkpoint.try_apply_delta(delta).unwrap();
+        // let mut per_source_checkpoint: BTreeMap<String, SourceCheckpoint> = BTreeMap::default();
+        // per_source_checkpoint.insert("kafka-source".to_string(), source_checkpoint);
+        // let checkpoint = IndexCheckpoint::from(per_source_checkpoint);
+        let checkpoint = IndexCheckpoint::default();
         let index_config = IndexConfig::sample_for_regression();
         let mut index_metadata = IndexMetadata {
             index_uid: IndexUid::from_parts("test", "11111111111111111111111111"),

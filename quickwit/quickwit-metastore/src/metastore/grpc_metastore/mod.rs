@@ -43,7 +43,7 @@ use quickwit_proto::tonic::Status;
 use quickwit_proto::{IndexUid, SpanContextInterceptor};
 use tower::timeout::error::Elapsed;
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::SourceCheckpointDelta;
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, Split,
     SplitMetadata,
@@ -239,25 +239,23 @@ impl Metastore for MetastoreGrpcClient {
         index_uid: IndexUid,
         split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()> {
         let split_ids_vec: Vec<String> = split_ids.iter().map(|split| split.to_string()).collect();
         let replaced_split_ids_vec: Vec<String> = replaced_split_ids
             .iter()
             .map(|split_id| split_id.to_string())
             .collect();
-        let index_checkpoint_delta_serialized_json = checkpoint_delta_opt
-            .map(|checkpoint_delta| serde_json::to_string(&checkpoint_delta))
-            .transpose()
+        let source_checkpoint_delta_serialized_json = serde_json::to_string(&checkpoint_delta)
             .map_err(|error| MetastoreError::JsonSerializeError {
-                struct_name: "IndexCheckpointDelta".to_string(),
+                struct_name: "SourceCheckpointDelta".to_string(),
                 message: error.to_string(),
             })?;
         let request = PublishSplitsRequest {
             index_uid: index_uid.into(),
             split_ids: split_ids_vec,
             replaced_split_ids: replaced_split_ids_vec,
-            index_checkpoint_delta_serialized_json,
+            index_checkpoint_delta_serialized_json: Some(source_checkpoint_delta_serialized_json),
         };
         self.underlying
             .clone()

@@ -38,7 +38,7 @@ use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 use quickwit_proto::IndexUid;
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::SourceCheckpointDelta;
 use crate::{MetastoreError, MetastoreResult, Split, SplitMetadata, SplitState};
 
 /// Metastore meant to manage Quickwit's indexes, their splits and delete tasks.
@@ -180,7 +180,7 @@ pub trait Metastore: Send + Sync + 'static {
         index_uid: IndexUid,
         staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()>;
 
     /// Lists the splits.

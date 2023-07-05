@@ -28,7 +28,7 @@ use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 use quickwit_proto::IndexUid;
 use tracing::info;
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, SourceCheckpointDelta};
 use crate::{IndexMetadata, ListSplitsQuery, Metastore, MetastoreResult, Split, SplitMetadata};
 
 /// Metastore events dispatched to subscribers.
@@ -143,15 +143,10 @@ impl Metastore for MetastoreEventPublisher {
         index_uid: IndexUid,
         split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
-        checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        checkpoint_delta: SourceCheckpointDelta,
     ) -> MetastoreResult<()> {
         self.underlying
-            .publish_splits(
-                index_uid,
-                split_ids,
-                replaced_split_ids,
-                checkpoint_delta_opt,
-            )
+            .publish_splits(index_uid, split_ids, replaced_split_ids, checkpoint_delta)
             .await
     }
 
