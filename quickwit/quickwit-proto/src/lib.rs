@@ -22,6 +22,7 @@
 #![allow(rustdoc::invalid_html_tags)]
 
 use anyhow::anyhow;
+use ulid::ULID_LEN;
 use ulid::Ulid;
 mod quickwit;
 mod quickwit_indexing_api;
@@ -324,14 +325,14 @@ pub fn set_parent_span_from_request_metadata(request_metadata: &tonic::metadata:
     Span::current().set_parent(parent_cx);
 }
 
-/// Index identifiers that uniquely identify not only the index, but also
+/// Index identifier that uniquely identifies not only the index, but also
 /// its incarnation allowing to distinguish between deleted and recreated indexes.
-/// It is represented as a stiring in index_id:incarnation_id format.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Ord, PartialOrd, Hash)]
+/// It is represented as a string of the form `<index_id>:<incarnation_id>`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct IndexUid(String);
 
 impl IndexUid {
-    /// Creates a new index uid form index_id and incarnation_id
+    /// Generates a new index UID from an index ID.
     pub fn new(index_id: impl Into<String>) -> Self {
         Self::from_parts(index_id, Ulid::new().to_string())
     }
@@ -339,6 +340,7 @@ impl IndexUid {
     pub fn from_parts(index_id: impl Into<String>, incarnation_id: impl Into<String>) -> Self {
         let incarnation_id = incarnation_id.into();
         let index_id = index_id.into();
+        // This branch exists for backward compatibility with indexes without incarnation ID.
         if incarnation_id.is_empty() {
             Self(index_id)
         } else {
@@ -347,19 +349,19 @@ impl IndexUid {
     }
 
     pub fn index_id(&self) -> &str {
-        self.0.split(':').next().unwrap()
-    }
-
-    pub fn incarnation_id(&self) -> &str {
-        if let Some(incarnation_id) = self.0.split(':').nth(1) {
-            incarnation_id
+        if self.0.len() > ULID_LEN + 1 && self.0.as_bytes()[self.0.len() - ULID_LEN - 1] == b':' {
+            &self.0[..self.0.len() - ULID_LEN - 1]
         } else {
-            ""
+            &self.0
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    pub fn incarnation_id(&self) -> &str {
+        if self.0.len() > ULID_LEN + 1 && self.0.as_bytes()[self.0.len() - ULID_LEN - 1] == b':' {
+            &self.0[self.0.len() - ULID_LEN..]
+        } else {
+            ""
+        }
     }
 }
 
@@ -545,30 +547,30 @@ mod tests {
     #[test]
     fn test_indexing_task_serialization_errors() {
         assert_eq!(
-            "Invalid index task format, cannot find index_id in ``",
-            IndexingTask::try_from("").unwrap_err().to_string()
+            IndexingTask::try_from("").unwrap_err().to_string(),
+            "Invalid index task format, cannot find index_id in ``"
         );
         assert_eq!(
-            "Invalid index task format, cannot find index_id in `foo`",
-            IndexingTask::try_from("foo").unwrap_err().to_string()
+            IndexingTask::try_from("foo").unwrap_err().to_string(),
+            "Invalid index task format, cannot find index_id in `foo`"
         );
     }
 
     #[test]
     fn test_index_uid_parsing() {
-        assert_eq!("foo", IndexUid::from("foo".to_string()).index_id());
-        assert_eq!("foo", IndexUid::from("foo:bar".to_string()).index_id());
-        assert_eq!("", IndexUid::from("foo".to_string()).incarnation_id());
+        assert_eq!(IndexUid::from("foo".to_string()).index_id(), "foo");
+        assert_eq!(IndexUid::from("foo:11111111111111111111111111".to_string()).index_id(), "foo");
+        assert_eq!(IndexUid::from("foo".to_string()).incarnation_id(), "");
         assert_eq!(
-            "bar",
-            IndexUid::from("foo:bar".to_string()).incarnation_id()
+            IndexUid::from("foo:11111111111111111111111111".to_string()).incarnation_id(),
+            "11111111111111111111111111",
         );
     }
 
     #[test]
     fn test_index_uid_roundtrip() {
-        assert_eq!("foo", IndexUid::from("foo".to_string()).to_string());
-        assert_eq!("foo:bar", IndexUid::from("foo:bar".to_string()).to_string());
+        assert_eq!(IndexUid::from("foo".to_string()).to_string(), "foo");
+        assert_eq!(IndexUid::from("foo:bar".to_string()).to_string(), "foo:bar");
     }
 
     #[test]
