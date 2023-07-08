@@ -22,6 +22,7 @@ use std::net::Ipv4Addr;
 
 use assert_json_diff::{assert_json_eq, assert_json_include};
 use quickwit_config::SearcherConfig;
+use quickwit_doc_mapper::tag_pruning::extract_tags_from_query;
 use quickwit_doc_mapper::DefaultDocMapper;
 use quickwit_indexing::TestSandbox;
 use quickwit_opentelemetry::otlp::TraceId;
@@ -29,7 +30,9 @@ use quickwit_proto::{
     LeafListTermsResponse, SearchRequest, SearchResponse, SortByValue, SortField, SortOrder,
     SortValue,
 };
-use quickwit_query::query_ast::{qast_helper, query_ast_from_user_text};
+use quickwit_query::query_ast::{
+    qast_helper, qast_string_helper, query_ast_from_user_text, QueryAst,
+};
 use serde_json::{json, Value as JsonValue};
 use tantivy::schema::Value as TantivyValue;
 use tantivy::time::OffsetDateTime;
@@ -60,8 +63,8 @@ async fn test_single_node_simple() -> anyhow::Result<()> {
     ];
     test_sandbox.add_documents(docs.clone()).await?;
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("anthropomorphic", &["body"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("anthropomorphic", &["body"]),
         max_hits: 2,
         ..Default::default()
     };
@@ -103,8 +106,8 @@ async fn test_single_node_termset() -> anyhow::Result<()> {
     ];
     test_sandbox.add_documents(docs.clone()).await?;
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("title: IN [beagle]", &[]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("title: IN [beagle]", &[]),
         start_timestamp: None,
         end_timestamp: None,
         max_hits: 2,
@@ -146,8 +149,8 @@ async fn test_single_search_with_snippet() -> anyhow::Result<()> {
     ];
     test_sandbox.add_documents(docs.clone()).await?;
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("beagle", &["title", "body"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("beagle", &["title", "body"]),
         snippet_fields: vec!["title".to_string(), "body".to_string()],
         max_hits: 2,
         ..Default::default()
@@ -184,9 +187,9 @@ async fn slop_search_and_check(
     query: &str,
     expected_num_match: u64,
 ) -> anyhow::Result<()> {
-    let query_ast = qast_helper(query, &["body"]);
+    let query_ast = qast_string_helper(query, &["body"]);
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
+        index_id_patterns: vec![index_id.to_string()],
         query_ast,
         max_hits: 5,
         ..Default::default()
@@ -339,7 +342,7 @@ async fn test_single_node_several_splits() -> anyhow::Result<()> {
     let query_ast = query_ast_from_user_text("beagle", None);
     let query_ast_json = serde_json::to_string(&query_ast).unwrap();
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
+        index_id_patterns: vec![index_id.to_string()],
         query_ast: query_ast_json,
         max_hits: 6,
         ..Default::default()
@@ -408,8 +411,8 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
     test_sandbox.add_documents(docs).await?;
 
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("info", &["body"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("info", &["body"]),
         start_timestamp: Some(start_timestamp + 10),
         end_timestamp: Some(start_timestamp + 20),
         max_hits: 15,
@@ -432,8 +435,8 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
 
     // filter on time range [i64::MIN 20[ should only hit first 19 docs because of filtering
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("info", &["body"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("info", &["body"]),
         end_timestamp: Some(start_timestamp + 20),
         max_hits: 25,
         sort_fields: vec![SortField {
@@ -455,8 +458,8 @@ async fn test_single_node_filtering() -> anyhow::Result<()> {
 
     // filter on tag, should return an error since no split is tagged
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("tag:foo AND info", &["body"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("tag:foo AND info", &["body"]),
         max_hits: 25,
         sort_fields: vec![SortField {
             field_name: "ts".to_string(),
@@ -540,8 +543,8 @@ async fn single_node_search_sort_by_field(
     test_sandbox.add_documents(docs).await?;
 
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("city", &["description"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("city", &["description"]),
         max_hits: 15,
         sort_fields: vec![SortField {
             field_name: sort_by_field.to_string(),
@@ -625,7 +628,7 @@ async fn test_sort_bm25() {
     let search_hits = |query: &str| {
         let query_ast_json = serde_json::to_string(&query_ast_from_user_text(query, None)).unwrap();
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
+            index_id_patterns: vec![index_id.to_string()],
             query_ast: query_ast_json,
             max_hits: 1_000,
             sort_fields: vec![SortField {
@@ -717,7 +720,7 @@ async fn test_sort_by_static_and_dynamic_field() {
     let search_hits = |sort_field: &str, order: SortOrder| {
         let query_ast_json = serde_json::to_string(&QueryAst::MatchAll).unwrap();
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
+            index_id_patterns: vec![index_id.to_string()],
             query_ast: query_ast_json,
             max_hits: 1_000,
             sort_fields: vec![SortField {
@@ -814,7 +817,7 @@ async fn test_sort_by_2_field() {
         |sort_field1: &str, order1: SortOrder, sort_field2: &str, order2: SortOrder| {
             let query_ast_json = serde_json::to_string(&QueryAst::MatchAll).unwrap();
             let search_request = SearchRequest {
-                index_id: index_id.to_string(),
+                index_id_patterns: vec![index_id.to_string()],
                 query_ast: query_ast_json,
                 max_hits: 1_000,
                 sort_fields: vec![
@@ -897,8 +900,8 @@ async fn test_single_node_invalid_sorting_with_query() {
     test_sandbox.add_documents(docs).await.unwrap();
 
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("city", &["description"]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("city", &["description"]),
         max_hits: 15,
         sort_fields: vec![SortField {
             field_name: "description".to_string(),
@@ -944,43 +947,37 @@ async fn test_single_node_split_pruning_by_tags() -> anyhow::Result<()> {
         test_sandbox.add_documents(docs).await?;
     }
 
-    let query_ast: String = qast_helper("owner:francois", &[]);
+    let query_ast: QueryAst = qast_helper("owner:francois", &[]);
 
     let selected_splits = list_relevant_splits(
-        index_uid.clone(),
-        &SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast,
-            ..Default::default()
-        },
+        vec![index_uid.clone()],
+        None,
+        None,
+        extract_tags_from_query(query_ast),
         &*test_sandbox.metastore(),
     )
     .await?;
     assert!(selected_splits.is_empty());
 
-    let query_ast: String = qast_helper("", &[]);
+    let query_ast: QueryAst = qast_helper("", &[]);
 
     let selected_splits = list_relevant_splits(
-        index_uid.clone(),
-        &SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast,
-            ..Default::default()
-        },
+        vec![index_uid.clone()],
+        None,
+        None,
+        extract_tags_from_query(query_ast),
         &*test_sandbox.metastore(),
     )
     .await?;
     assert_eq!(selected_splits.len(), 2);
 
-    let query_ast: String = qast_helper("owner:francois OR owner:paul OR owner:adrien", &[]);
+    let query_ast: QueryAst = qast_helper("owner:francois OR owner:paul OR owner:adrien", &[]);
 
     let selected_splits = list_relevant_splits(
-        index_uid.clone(),
-        &SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast,
-            ..Default::default()
-        },
+        vec![index_uid.clone()],
+        None,
+        None,
+        extract_tags_from_query(query_ast),
         &*test_sandbox.metastore(),
     )
     .await?;
@@ -1011,8 +1008,8 @@ async fn test_search_util(test_sandbox: &TestSandbox, query: &str) -> Vec<u32> {
         .map(|split_meta| extract_split_and_footer_offsets(&split_meta.split_metadata))
         .collect();
     let request = quickwit_proto::SearchRequest {
-        index_id: test_sandbox.index_uid().index_id().to_string(),
-        query_ast: qast_helper(query, &[]),
+        index_id_patterns: vec![test_sandbox.index_uid().index_id().to_string()],
+        query_ast: qast_string_helper(query, &[]),
         max_hits: 100,
         ..Default::default()
     };
@@ -1331,8 +1328,8 @@ async fn test_single_node_aggregation() -> anyhow::Result<()> {
 
     test_sandbox.add_documents(docs.clone()).await?;
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("*", &[]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("*", &[]),
         max_hits: 2,
         aggregation_request: Some(agg_req.to_string()),
         ..Default::default()
@@ -1404,8 +1401,8 @@ async fn test_single_node_aggregation_missing_fast_field() {
 
     test_sandbox.add_documents(docs.clone()).await.unwrap();
     let search_request = SearchRequest {
-        index_id: index_id.to_string(),
-        query_ast: qast_helper("*", &[]),
+        index_id_patterns: vec![index_id.to_string()],
+        query_ast: qast_string_helper("*", &[]),
         max_hits: 2,
         aggregation_request: Some(agg_req.to_string()),
         ..Default::default()
@@ -1446,8 +1443,8 @@ async fn test_single_node_with_ip_field() -> anyhow::Result<()> {
     test_sandbox.add_documents(docs.clone()).await?;
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("*", &[]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("*", &[]),
             max_hits: 10,
             ..Default::default()
         };
@@ -1462,8 +1459,8 @@ async fn test_single_node_with_ip_field() -> anyhow::Result<()> {
     }
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("10.10.11.125", &["host"]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("10.10.11.125", &["host"]),
             max_hits: 10,
             ..Default::default()
         };
@@ -1518,8 +1515,8 @@ async fn test_single_node_range_queries() -> anyhow::Result<()> {
     test_sandbox.add_documents(docs).await?;
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper(
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper(
                 "datetime:[2023-01-10T15:13:36Z TO 2023-01-10T15:13:38Z}",
                 &[],
             ),
@@ -1537,8 +1534,8 @@ async fn test_single_node_range_queries() -> anyhow::Result<()> {
     }
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("status_code:[400 TO 401]", &[]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("status_code:[400 TO 401]", &[]),
             max_hits: 10,
             ..Default::default()
         };
@@ -1553,8 +1550,8 @@ async fn test_single_node_range_queries() -> anyhow::Result<()> {
     }
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("host:[10.0.0.0 TO 10.255.255.255]", &[]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("host:[10.0.0.0 TO 10.255.255.255]", &[]),
             max_hits: 10,
             ..Default::default()
         };
@@ -1569,8 +1566,8 @@ async fn test_single_node_range_queries() -> anyhow::Result<()> {
     }
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("latency:[100 TO *]", &[]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("latency:[100 TO *]", &[]),
             max_hits: 10,
             ..Default::default()
         };
@@ -1585,8 +1582,8 @@ async fn test_single_node_range_queries() -> anyhow::Result<()> {
     }
     {
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("error_code:[-1 TO 1]", &[]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("error_code:[-1 TO 1]", &[]),
             max_hits: 10,
             ..Default::default()
         };
@@ -1775,8 +1772,8 @@ async fn test_single_node_find_trace_ids_collector() {
         .to_string();
 
         let search_request = SearchRequest {
-            index_id: index_id.to_string(),
-            query_ast: qast_helper("*", &[]),
+            index_id_patterns: vec![index_id.to_string()],
+            query_ast: qast_string_helper("*", &[]),
             aggregation_request: Some(aggregations),
             ..Default::default()
         };

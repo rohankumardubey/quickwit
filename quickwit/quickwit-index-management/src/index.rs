@@ -102,8 +102,8 @@ impl IndexService {
         if overwrite {
             match self.delete_index(&index_config.index_id, false).await {
                 Ok(_)
-                | Err(IndexServiceError::MetastoreError(MetastoreError::IndexDoesNotExist {
-                    index_id: _,
+                | Err(IndexServiceError::MetastoreError(MetastoreError::IndexesDoNotExist {
+                    index_ids: _,
                 })) => {
                     // Ignore IndexDoesNotExist error.
                 }
@@ -442,7 +442,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(error, MetastoreError::IndexDoesNotExist { index_id } if index_id == index_uid.index_id())
+            matches!(error, MetastoreError::IndexesDoNotExist { index_ids } if index_ids == vec![index_uid.index_id().to_string()])
         );
         assert!(!storage.exists(split_path).await.unwrap());
     }
