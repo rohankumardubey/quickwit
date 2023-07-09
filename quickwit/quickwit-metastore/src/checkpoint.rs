@@ -34,6 +34,16 @@ use tracing::{info, warn};
 #[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct PartitionId(pub Arc<String>);
 
+impl PartitionId {
+    pub fn as_i64(&self) -> Option<i64> {
+        self.0.parse::<i64>().ok()
+    }
+
+    pub fn as_u64(&self) -> Option<u64> {
+        self.0.parse::<u64>().ok()
+    }
+}
+
 impl From<String> for PartitionId {
     fn from(partition_id_str: String) -> Self {
         PartitionId(Arc::new(partition_id_str))
@@ -85,6 +95,13 @@ impl Position {
         match self {
             Position::Beginning => "",
             Position::Offset(offset) => offset,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Position::Beginning => None,
+            Position::Offset(offset) => offset.parse::<i64>().ok(),
         }
     }
 }
@@ -222,7 +239,7 @@ impl SourceCheckpoint {
 /// Creates a checkpoint from an iterator of `(PartitionId, Position)` tuples.
 /// ```
 /// use quickwit_metastore::checkpoint::{SourceCheckpoint, PartitionId, Position};
-/// let checkpoint: SourceCheckpoint = vec![(0u64, 0u64), (1u64, 2u64)]
+/// let checkpoint: SourceCheckpoint = [(0u64, 0u64), (1u64, 2u64)]
 ///     .into_iter()
 ///     .map(|(partition_id, offset)| {
 ///         (PartitionId::from(partition_id), Position::from(offset))
