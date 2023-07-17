@@ -333,7 +333,7 @@ mod kinesis_localstack_tests {
             &kinesis_client,
             &stream_name,
             |stream_status| stream_status != StreamStatus::Deleting,
-            Duration::from_secs(1),
+            Duration::from_secs(5),
         )
         .await;
         assert!(!list_streams(&kinesis_client, None, None,)
