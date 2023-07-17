@@ -16,6 +16,7 @@ byte-unit = { workspace = true }
 sqlx = { workspace = true, optional = true }
 futures = { workspace = true }
 http = { workspace = true }
+humantime = { workspace = true }
 itertools = { workspace = true }
 mockall = { workspace = true, optional = true }
 once_cell = { workspace = true }
@@ -37,6 +38,7 @@ ulid = { workspace = true, features = ["serde"] }
 quickwit-common = { workspace = true }
 quickwit-config = { workspace = true }
 quickwit-doc-mapper = { workspace = true }
+quickwit-ingest = { workspace = true }
 quickwit-proto = { workspace = true }
 quickwit-query = { workspace = true }
 quickwit-storage = { workspace = true }

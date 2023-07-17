@@ -54,10 +54,10 @@ use ulid::Ulid;
 use crate::actors::IndexSerializer;
 use crate::models::{
     CommitTrigger, EmptySplit, IndexedSplitBatchBuilder, IndexedSplitBuilder, NewPublishLock,
-    ProcessedDoc, ProcessedDocBatch, PublishLock,
+    NewPublishToken, ProcessedDoc, ProcessedDocBatch, PublishLock,
 };
 
-// Random partition id used to gather partitions exceeding the maximum number of partitions.
+// Random partition ID used to gather partitions exceeding the maximum number of partitions.
 const OTHER_PARTITION_ID: u64 = 3264326757911759461u64;
 
 #[derive(Debug)]
@@ -84,6 +84,7 @@ struct IndexerState {
     indexing_directory: TempDirectory,
     indexing_settings: IndexingSettings,
     publish_lock: PublishLock,
+    publish_token: Option<String>,
     schema: Schema,
     tokenizer_manager: TokenizerManager,
     max_num_partitions: NonZeroU32,
@@ -192,21 +193,27 @@ impl IndexerState {
                     .last_delete_opstamp(self.pipeline_id.index_uid.clone()),
             )
             .await?;
+
+        let checkpoint_delta = IndexCheckpointDelta {
+            source_id: self.pipeline_id.source_id.clone(),
+            source_delta: SourceCheckpointDelta::default(),
+        };
+        let publish_lock = self.publish_lock.clone();
+        let publish_token = self.publish_token.clone();
+
         let workbench = IndexingWorkbench {
             workbench_id,
             create_instant: Instant::now(),
-            batch_parent_span,
-            _indexing_span: indexing_span,
             indexed_splits: FnvHashMap::with_capacity_and_hasher(250, Default::default()),
             other_indexed_split_opt: None,
-            checkpoint_delta: IndexCheckpointDelta {
-                source_id: self.pipeline_id.source_id.clone(),
-                source_delta: SourceCheckpointDelta::default(),
-            },
+            checkpoint_delta,
             indexing_permit,
-            publish_lock: self.publish_lock.clone(),
+            publish_lock,
+            publish_token,
             last_delete_opstamp,
             memory_usage: Byte::from_bytes(0),
+            batch_parent_span,
+            _indexing_span: indexing_span,
         };
         Ok(workbench)
     }
@@ -306,23 +313,23 @@ impl IndexerState {
 struct IndexingWorkbench {
     workbench_id: Ulid,
     create_instant: Instant,
-    // This span is used for the entire lifetime of the splits batch creations
-    // This span is meant to be passed through the pipeline.
-    batch_parent_span: Span,
-    // Span for the in-memory indexing (done in the Indexer actor).
-    _indexing_span: Span,
-
     indexed_splits: FnvHashMap<u64, IndexedSplitBuilder>,
     other_indexed_split_opt: Option<IndexedSplitBuilder>,
-
     checkpoint_delta: IndexCheckpointDelta,
     indexing_permit: Option<OwnedSemaphorePermit>,
     publish_lock: PublishLock,
+    publish_token: Option<String>,
     // On workbench creation, we fetch from the metastore the last delete task opstamp.
     // We use this value to set the `delete_opstamp` of the workbench splits.
     last_delete_opstamp: u64,
     // Number of bytes declared as used by tantivy.
     memory_usage: Byte,
+
+    // This span is used for the entire lifetime of the splits batch creations
+    // and meant to be passed along the pipeline.
+    batch_parent_span: Span,
+    // Span for the in-memory indexing (done in the Indexer actor).
+    _indexing_span: Span,
 }
 
 pub struct Indexer {
@@ -458,6 +465,21 @@ impl Handler<NewPublishLock> for Indexer {
     }
 }
 
+#[async_trait]
+impl Handler<NewPublishToken> for Indexer {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        message: NewPublishToken,
+        _ctx: &ActorContext<Self>,
+    ) -> Result<(), ActorExitStatus> {
+        let NewPublishToken(publish_token) = message;
+        self.indexer_state.publish_token = Some(publish_token);
+        Ok(())
+    }
+}
+
 impl Indexer {
     pub fn new(
         pipeline_id: IndexingPipelineId,
@@ -486,6 +508,7 @@ impl Indexer {
                 indexing_directory,
                 indexing_settings,
                 publish_lock: PublishLock::default(),
+                publish_token: None,
                 schema,
                 tokenizer_manager,
                 index_settings,
@@ -550,6 +573,7 @@ impl Indexer {
             other_indexed_split_opt,
             checkpoint_delta,
             publish_lock,
+            publish_token,
             batch_parent_span,
             indexing_permit,
             ..
@@ -574,9 +598,10 @@ impl Indexer {
                     &self.index_serializer_mailbox,
                     EmptySplit {
                         index_uid: self.indexer_state.pipeline_id.index_uid.clone(),
-                        batch_parent_span,
                         checkpoint_delta,
                         publish_lock,
+                        publish_token,
+                        batch_parent_span,
                     },
                 )
                 .await?;
@@ -593,6 +618,7 @@ impl Indexer {
                 splits,
                 checkpoint_delta: Some(checkpoint_delta),
                 publish_lock,
+                publish_token,
                 commit_trigger,
             },
         )
@@ -711,6 +737,7 @@ mod tests {
                 ],
                 checkpoint_delta: SourceCheckpointDelta::from_range(4..6),
                 force_commit: false,
+                publish_token: None,
             })
             .await?;
         indexer_mailbox
@@ -737,6 +764,7 @@ mod tests {
                 ],
                 checkpoint_delta: SourceCheckpointDelta::from_range(6..8),
                 force_commit: false,
+                publish_token: None,
             })
             .await?;
         indexer_mailbox
@@ -752,6 +780,7 @@ mod tests {
                 }],
                 checkpoint_delta: SourceCheckpointDelta::from_range(8..9),
                 force_commit: false,
+                publish_token: None,
             })
             .await?;
         let indexer_counters = indexer_handle.process_pending_and_observe().await.state;
@@ -840,6 +869,7 @@ mod tests {
                     docs: vec![make_doc(i)],
                     checkpoint_delta: SourceCheckpointDelta::from_range(i..i + 1),
                     force_commit: false,
+                    publish_token: None,
                 })
                 .await?;
             let output_messages: Vec<IndexedSplitBatchBuilder> =
@@ -913,6 +943,7 @@ mod tests {
                             num_bytes: 30,
                         }],
                         force_commit: false,
+                        publish_token: None,
                         checkpoint_delta: SourceCheckpointDelta::from_range(position..position + 1),
                     })
                     .await
@@ -993,6 +1024,7 @@ mod tests {
                 }],
                 checkpoint_delta: SourceCheckpointDelta::from_range(8..9),
                 force_commit: false,
+                publish_token: None,
             })
             .await
             .unwrap();
@@ -1067,6 +1099,7 @@ mod tests {
                 }],
                 checkpoint_delta: SourceCheckpointDelta::from_range(8..9),
                 force_commit: false,
+                publish_token: None,
             })
             .await
             .unwrap();
@@ -1162,6 +1195,7 @@ mod tests {
                 ],
                 checkpoint_delta: SourceCheckpointDelta::from_range(8..9),
                 force_commit: false,
+                publish_token: None,
             })
             .await?;
 
@@ -1244,6 +1278,7 @@ mod tests {
                     }],
                     checkpoint_delta: SourceCheckpointDelta::from_range(partition..partition + 1),
                     force_commit: false,
+                    publish_token: None,
                 })
                 .await
                 .unwrap();
@@ -1325,6 +1360,7 @@ mod tests {
                     }],
                     checkpoint_delta: SourceCheckpointDelta::from_range(0..1),
                     force_commit: false,
+                    publish_token: None,
                 })
                 .await
                 .unwrap();
@@ -1399,6 +1435,7 @@ mod tests {
                 }],
                 checkpoint_delta: SourceCheckpointDelta::from_range(0..1),
                 force_commit: false,
+                publish_token: None,
             })
             .await
             .unwrap();
@@ -1458,6 +1495,7 @@ mod tests {
                 }],
                 checkpoint_delta: SourceCheckpointDelta::from_range(0..1),
                 force_commit: true,
+                publish_token: None,
             })
             .await
             .unwrap();
@@ -1497,7 +1535,7 @@ mod tests {
         let mut metastore = MockMetastore::default();
         metastore
             .expect_publish_splits()
-            .returning(move |_, splits, _, _| {
+            .returning(move |_, splits, _, _, _| {
                 assert!(splits.is_empty());
                 Ok(())
             });
@@ -1522,6 +1560,7 @@ mod tests {
                 docs: Vec::new(),
                 checkpoint_delta: SourceCheckpointDelta::from_range(4..6),
                 force_commit: false,
+                publish_token: None,
             })
             .await?;
         indexer_mailbox
@@ -1529,6 +1568,7 @@ mod tests {
                 docs: Vec::new(),
                 checkpoint_delta: SourceCheckpointDelta::from_range(6..8),
                 force_commit: false,
+                publish_token: None,
             })
             .await?;
         universe

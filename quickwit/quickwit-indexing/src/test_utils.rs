@@ -32,13 +32,13 @@ use quickwit_config::{
     SourceConfig, SourceInputFormat, SourceParams, VecSourceParams,
 };
 use quickwit_doc_mapper::DocMapper;
-use quickwit_ingest::{init_ingest_api, QUEUES_DIR_NAME};
+use quickwit_ingest::{init_ingest_api, IngesterPool, QUEUES_DIR_NAME};
 use quickwit_metastore::{Metastore, MetastoreResolver, Split, SplitMetadata, SplitState};
 use quickwit_proto::IndexUid;
 use quickwit_storage::{Storage, StorageResolver};
 use serde_json::Value as JsonValue;
 
-use crate::actors::IndexingService;
+use crate::actors::IndexingPipelineManager;
 use crate::models::{DetachIndexingPipeline, IndexingStatistics, SpawnPipeline};
 
 /// Creates a Test environment.
@@ -48,7 +48,7 @@ use crate::models::{DetachIndexingPipeline, IndexingStatistics, SpawnPipeline};
 /// but the construction of the index involves temporary file directory.
 pub struct TestSandbox {
     index_uid: IndexUid,
-    indexing_service: Mailbox<IndexingService>,
+    indexing_service: Mailbox<IndexingPipelineManager>,
     doc_mapper: Arc<dyn DocMapper>,
     metastore: Arc<dyn Metastore>,
     storage_resolver: StorageResolver,
@@ -103,7 +103,8 @@ impl TestSandbox {
         let queues_dir_path = temp_dir.path().join(QUEUES_DIR_NAME);
         let ingest_api_service =
             init_ingest_api(&universe, &queues_dir_path, &IngestApiConfig::default()).await?;
-        let indexing_service_actor = IndexingService::new(
+        let ingester_pool = IngesterPool::default();
+        let indexing_service_actor = IndexingPipelineManager::new(
             node_id.to_string(),
             temp_dir.path().to_path_buf(),
             indexer_config,
@@ -111,6 +112,7 @@ impl TestSandbox {
             cluster,
             metastore.clone(),
             Some(ingest_api_service),
+            ingester_pool,
             storage_resolver.clone(),
         )
         .await?;

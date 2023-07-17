@@ -32,7 +32,10 @@ use quickwit_config::{
     IndexConfig, MetastoreBackend, MetastoreConfig, PostgresMetastoreConfig, SourceConfig,
 };
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
-use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
+use quickwit_proto::metastore::{
+    CloseShardsRequest, CloseShardsResponse, CloseShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, ListShardsRequest, ListShardsResponse, OpenShardsRequest,
+};
 use quickwit_proto::IndexUid;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgConnectOptions, PgDatabaseError, PgPoolOptions};
@@ -42,6 +45,7 @@ use tracing::log::LevelFilter;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::checkpoint::IndexCheckpointDelta;
+use crate::error::EntityKind;
 use crate::metastore::instrumented_metastore::InstrumentedMetastore;
 use crate::metastore::postgresql_model::{
     DeleteTask as PgDeleteTask, Index as PgIndex, Split as PgSplit,
@@ -192,8 +196,10 @@ async fn index_metadata(
 ) -> MetastoreResult<IndexMetadata> {
     index_opt(tx.as_mut(), index_id)
         .await?
-        .ok_or_else(|| MetastoreError::IndexDoesNotExist {
-            index_id: index_id.to_string(),
+        .ok_or_else(|| {
+            MetastoreError::NotFound(EntityKind::Index {
+                index_id: index_id.to_string(),
+            })
         })?
         .index_metadata()
 }
@@ -342,13 +348,15 @@ fn convert_sqlx_err(index_id: &str, sqlx_err: sqlx::Error) -> MetastoreError {
             let pg_error_table = pg_db_error.table();
 
             match (pg_error_code, pg_error_table) {
-                (pg_error_code::FOREIGN_KEY_VIOLATION, _) => MetastoreError::IndexDoesNotExist {
-                    index_id: index_id.to_string(),
-                },
-                (pg_error_code::UNIQUE_VIOLATION, Some(table)) if table.starts_with("indexes") => {
-                    MetastoreError::IndexAlreadyExists {
+                (pg_error_code::FOREIGN_KEY_VIOLATION, _) => {
+                    MetastoreError::NotFound(EntityKind::Index {
                         index_id: index_id.to_string(),
-                    }
+                    })
+                }
+                (pg_error_code::UNIQUE_VIOLATION, Some(table)) if table.starts_with("indexes") => {
+                    MetastoreError::AlreadyExists(EntityKind::Index {
+                        index_id: index_id.to_string(),
+                    })
                 }
                 (pg_error_code::UNIQUE_VIOLATION, _) => {
                     error!(pg_db_err=?boxed_db_err, "postgresql-error");
@@ -410,9 +418,9 @@ where
     let index_id = index_uid.index_id();
     let mut index_metadata = index_metadata(tx, index_id).await?;
     if index_metadata.index_uid != index_uid {
-        return Err(MetastoreError::IndexDoesNotExist {
+        return Err(MetastoreError::NotFound(EntityKind::Index {
             index_id: index_id.to_string(),
-        });
+        }));
     }
     let mutation_occurred = mutate_fn(&mut index_metadata)?;
     if !mutation_occurred {
@@ -436,9 +444,9 @@ where
     .execute(tx.as_mut())
     .await?;
     if update_index_res.rows_affected() == 0 {
-        return Err(MetastoreError::IndexDoesNotExist {
+        return Err(MetastoreError::NotFound(EntityKind::Index {
             index_id: index_id.to_string(),
-        });
+        }));
     }
     Ok(mutation_occurred)
 }
@@ -489,9 +497,9 @@ impl Metastore for PostgresqlMetastore {
             .execute(&self.connection_pool)
             .await?;
         if delete_res.rows_affected() == 0 {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         Ok(())
     }
@@ -589,9 +597,7 @@ impl Metastore for PostgresqlMetastore {
                     split_ids: failed_split_ids,
                 });
             }
-
             debug!(index_id=%index_uid.index_id(), num_splits=split_ids.len(), "Splits successfully staged.");
-
             Ok(())
         })
     }
@@ -603,13 +609,14 @@ impl Metastore for PostgresqlMetastore {
         staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        _publish_token: Option<String>,
     ) -> MetastoreResult<()> {
         run_with_tx!(self.connection_pool, tx, {
             let mut index_metadata = index_metadata(tx, index_uid.index_id()).await?;
             if index_metadata.index_uid != index_uid {
-                return Err(MetastoreError::IndexDoesNotExist {
+                return Err(MetastoreError::NotFound(EntityKind::Index {
                     index_id: index_uid.index_id().to_string(),
-                });
+                }));
             }
             if let Some(checkpoint_delta) = checkpoint_delta_opt {
                 index_metadata
@@ -745,9 +752,9 @@ impl Metastore for PostgresqlMetastore {
                 .await?
                 .is_none()
         {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: query.index_uid.index_id().to_string(),
-            });
+            }));
         }
         pg_splits
             .into_iter()
@@ -809,9 +816,9 @@ impl Metastore for PostgresqlMetastore {
                 .await?
                 .is_none()
         {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         info!(
             index_id=%index_uid.index_id(),
@@ -891,9 +898,9 @@ impl Metastore for PostgresqlMetastore {
                 .await?
                 .is_none()
         {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         if !not_deletable_split_ids.is_empty() {
             return Err(MetastoreError::SplitsNotDeletable {
@@ -917,8 +924,10 @@ impl Metastore for PostgresqlMetastore {
     async fn index_metadata(&self, index_id: &str) -> MetastoreResult<IndexMetadata> {
         index_opt(&self.connection_pool, index_id)
             .await?
-            .ok_or_else(|| MetastoreError::IndexDoesNotExist {
-                index_id: index_id.to_string(),
+            .ok_or_else(|| {
+                MetastoreError::NotFound(EntityKind::Index {
+                    index_id: index_id.to_string(),
+                })
             })?
             .index_metadata()
     }
@@ -1077,9 +1086,9 @@ impl Metastore for PostgresqlMetastore {
                 .await?
                 .is_none()
         {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         Ok(())
     }
@@ -1145,14 +1154,44 @@ impl Metastore for PostgresqlMetastore {
                 .await?
                 .is_none()
         {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         pg_stale_splits
             .into_iter()
             .map(|pg_split| pg_split.try_into())
             .collect()
+    }
+
+    // Shard API
+
+    async fn open_shards(
+        &self,
+        _request: OpenShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse> {
+        unimplemented!("open_shards")
+    }
+
+    async fn close_shards(
+        &self,
+        _request: CloseShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse> {
+        unimplemented!("close_shards")
+    }
+
+    async fn delete_shards(
+        &self,
+        _request: DeleteShardsRequest,
+    ) -> MetastoreResult<DeleteShardsResponse> {
+        unimplemented!("delete_shards")
+    }
+
+    async fn list_shards(
+        &self,
+        _request: ListShardsRequest,
+    ) -> MetastoreResult<ListShardsResponse> {
+        unimplemented!("list_shards")
     }
 }
 

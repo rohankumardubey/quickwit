@@ -88,8 +88,7 @@ impl Packager {
     ) -> anyhow::Result<PackagedSplit> {
         let segment_metas = split.index.searchable_segment_metas()?;
         assert_eq!(segment_metas.len(), 1);
-        let packaged_split =
-            create_packaged_split(&segment_metas[..], split, &self.tag_fields, ctx)?;
+        let packaged_split = create_packaged_split(&segment_metas, split, &self.tag_fields, ctx)?;
         Ok(packaged_split)
     }
 }
@@ -130,13 +129,15 @@ impl Handler<IndexedSplitBatch> for Packager {
             .splits
             .iter()
             .map(|split| split.split_id().to_string())
-            .collect_vec();
+            .collect();
         info!(
             split_ids=?split_ids,
             "start-packaging-splits"
         );
         fail_point!("packager:before");
-        let mut packaged_splits = Vec::new();
+
+        let mut packaged_splits = Vec::with_capacity(batch.splits.len());
+
         for split in batch.splits {
             if batch.publish_lock.is_dead() {
                 // TODO: Remove the junk right away?
@@ -155,6 +156,7 @@ impl Handler<IndexedSplitBatch> for Packager {
                 packaged_splits,
                 batch.checkpoint_delta,
                 batch.publish_lock,
+                batch.publish_token,
                 batch.merge_operation,
                 batch.batch_parent_span,
             ),
@@ -462,6 +464,7 @@ mod tests {
                 splits: vec![indexed_split],
                 checkpoint_delta: IndexCheckpointDelta::for_test("source_id", 10..20).into(),
                 publish_lock: PublishLock::default(),
+                publish_token: None,
                 batch_parent_span: Span::none(),
                 merge_operation: None,
             })

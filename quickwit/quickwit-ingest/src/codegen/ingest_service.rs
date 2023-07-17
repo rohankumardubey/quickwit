@@ -152,6 +152,7 @@ impl CommitType {
 }
 /// BEGIN quickwit-codegen
 use tower::{Layer, Service, ServiceExt};
+use quickwit_common::tower::BoxFuture;
 #[cfg_attr(any(test, feature = "testsuite"), mockall::automock)]
 #[async_trait::async_trait]
 pub trait IngestService: std::fmt::Debug + dyn_clone::DynClone + Send + Sync + 'static {
@@ -227,7 +228,7 @@ impl IngestService for IngestServiceClient {
     }
 }
 #[cfg(any(test, feature = "testsuite"))]
-pub mod mock {
+pub mod ingest_service_mock {
     use super::*;
     #[derive(Debug, Clone)]
     struct MockIngestServiceWrapper {
@@ -260,9 +261,6 @@ pub mod mock {
         }
     }
 }
-pub type BoxFuture<T, E> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<T, E>> + Send + 'static>,
->;
 impl tower::Service<IngestRequest> for Box<dyn IngestService> {
     type Response = IngestResponse;
     type Error = crate::IngestServiceError;

@@ -23,6 +23,8 @@ use prost_build::{Method, Service, ServiceGenerator};
 use quote::{quote, ToTokens};
 use syn::Ident;
 
+use crate::ProstConfig;
+
 pub struct Codegen;
 
 impl Codegen {
@@ -39,7 +41,7 @@ impl Codegen {
             result_type_path,
             error_type_path,
             includes,
-            prost_build::Config::default(),
+            ProstConfig::default(),
         )
     }
 
@@ -49,7 +51,7 @@ impl Codegen {
         result_type_path: &str,
         error_type_path: &str,
         includes: &[&str],
-        mut prost_config: prost_build::Config,
+        mut prost_config: ProstConfig,
     ) -> anyhow::Result<()> {
         let service_generator = Box::new(QuickwitServiceGenerator::new(
             result_type_path,
@@ -57,18 +59,19 @@ impl Codegen {
         ));
 
         prost_config
-            .protoc_arg("--experimental_allow_proto3_optional")
-            .type_attribute(
-                ".",
-                "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
-            )
+            .bytes(["DocBatch.doc_buffer", "DocBatchV2.doc_buffer"])
+            .enum_attribute(".", "#[serde(rename_all=\"snake_case\")]")
             .field_attribute(
                 "DocBatch.doc_buffer",
                 "#[schema(value_type = String, format = Binary)]",
             )
-            .enum_attribute(".", "#[serde(rename_all=\"snake_case\")]")
+            .protoc_arg("--experimental_allow_proto3_optional")
+            .out_dir(out_dir)
             .service_generator(service_generator)
-            .out_dir(out_dir);
+            .type_attribute(
+                ".",
+                "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
+            );
 
         for proto in protos {
             println!("cargo:rerun-if-changed={proto}");
@@ -124,6 +127,7 @@ struct CodegenContext {
     tower_block_name: Ident,
     tower_block_builder_name: Ident,
     mailbox_name: Ident,
+    mock_mod_name: Ident,
     mock_name: Ident,
     grpc_client_package_name: Ident,
     grpc_client_name: Ident,
@@ -136,6 +140,7 @@ struct CodegenContext {
 impl CodegenContext {
     fn from_service(service: &Service, result_type_path: &str, error_type_path: &str) -> Self {
         let service_name = quote::format_ident!("{}", service.name);
+        let mock_mod_name = quote::format_ident!("{}_mock", service.name.to_snake_case());
         let mock_name = quote::format_ident!("Mock{}", service.name);
 
         let result_type = syn::parse_str::<syn::Path>(result_type_path)
@@ -179,6 +184,7 @@ impl CodegenContext {
             tower_block_name,
             tower_block_builder_name,
             mailbox_name,
+            mock_mod_name,
             mock_name,
             grpc_client_package_name,
             grpc_client_name,
@@ -208,13 +214,13 @@ fn generate_all(service: &Service, result_type_path: &str, error_type_path: &str
 
         use tower::{Layer, Service, ServiceExt};
 
+        use quickwit_common::tower::BoxFuture;
+
         #stream_type_alias
 
         #service_trait
 
         #client
-
-        pub type BoxFuture<T, E> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send + 'static>>;
 
         #tower_services
 
@@ -332,6 +338,7 @@ fn generate_client(context: &CodegenContext) -> TokenStream {
     let mock_methods = generate_client_methods(context, true);
     let mailbox_name = &context.mailbox_name;
     let tower_block_builder_name = &context.tower_block_builder_name;
+    let mock_mod_name = &context.mock_mod_name;
     let mock_name = &context.mock_name;
     let mock_wrapper_name = quote::format_ident!("{}Wrapper", mock_name);
 
@@ -390,7 +397,7 @@ fn generate_client(context: &CodegenContext) -> TokenStream {
         }
 
         #[cfg(any(test, feature = "testsuite"))]
-        pub mod mock {
+        pub mod #mock_mod_name {
             use super::*;
 
             #[derive(Debug, Clone)]

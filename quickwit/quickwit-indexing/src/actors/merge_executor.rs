@@ -132,6 +132,7 @@ impl Handler<MergeScratch> for MergeExecutor {
                     splits: vec![indexed_split],
                     checkpoint_delta: Default::default(),
                     publish_lock: PublishLock::default(),
+                    publish_token: None,
                     merge_operation: Some(merge_op),
                 },
             )
@@ -715,6 +716,7 @@ mod tests {
                 index_uid.clone(),
                 &[new_split_metadata.split_id()],
                 &[split_metadata.split_id()],
+                None,
                 None,
             )
             .await

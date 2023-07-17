@@ -24,7 +24,7 @@ use std::hash::{Hash, Hasher};
 /// Computes the affinity of a node for a given `key`.
 /// A higher value means a higher affinity.
 /// This is the `rendezvous hash`.
-fn node_affinity<T: Hash, U: Hash>(node: T, key: &U) -> u64 {
+fn compute_affinity<T: Hash, U: Hash>(node: T, key: &U) -> u64 {
     let mut state = DefaultHasher::new();
     key.hash(&mut state);
     node.hash(&mut state);
@@ -34,7 +34,16 @@ fn node_affinity<T: Hash, U: Hash>(node: T, key: &U) -> u64 {
 /// Sorts the list of node ordered by decreasing affinity values.
 /// This is called rendezvous hashing.
 pub fn sort_by_rendez_vous_hash<T: Hash, U: Hash>(nodes: &mut [T], key: U) {
-    nodes.sort_by_cached_key(|node| Reverse(node_affinity(node, &key)));
+    nodes.sort_by_cached_key(|node| Reverse(compute_affinity(node, &key)));
+}
+
+pub fn max_affinity<T: Hash, U: Hash>(
+    candidates: impl IntoIterator<Item = T>,
+    key: &U,
+) -> Option<T> {
+    candidates
+        .into_iter()
+        .max_by_key(|candidate| compute_affinity(candidate, key))
 }
 
 #[cfg(test)]

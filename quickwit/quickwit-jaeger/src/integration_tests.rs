@@ -27,10 +27,10 @@ use quickwit_cluster::{create_cluster_for_test, ChannelTransport, Cluster};
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexerConfig, IngestApiConfig, JaegerConfig, SearcherConfig, SourceConfig};
 use quickwit_indexing::models::SpawnPipeline;
-use quickwit_indexing::IndexingService;
+use quickwit_indexing::IndexingPipelineManager;
 use quickwit_ingest::{
     init_ingest_api, CommitType, CreateQueueRequest, IngestApiService, IngestServiceClient,
-    QUEUES_DIR_NAME,
+    IngesterPool, QUEUES_DIR_NAME,
 };
 use quickwit_metastore::{FileBackedMetastore, Metastore};
 use quickwit_opentelemetry::otlp::OtlpGrpcTracesService;
@@ -337,9 +337,13 @@ async fn indexer_for_test(
     metastore: Arc<dyn Metastore>,
     storage_resolver: StorageResolver,
     ingester_service: Mailbox<IngestApiService>,
-) -> (Mailbox<IndexingService>, ActorHandle<IndexingService>) {
+) -> (
+    Mailbox<IndexingPipelineManager>,
+    ActorHandle<IndexingPipelineManager>,
+) {
     let indexer_config = IndexerConfig::for_test().unwrap();
-    let indexing_service = IndexingService::new(
+    let ingester_pool = IngesterPool::default();
+    let indexing_service = IndexingPipelineManager::new(
         "test-node".to_string(),
         data_dir_path.to_path_buf(),
         indexer_config,
@@ -347,6 +351,7 @@ async fn indexer_for_test(
         cluster,
         metastore,
         Some(ingester_service),
+        ingester_pool,
         storage_resolver,
     )
     .await
@@ -388,7 +393,7 @@ async fn setup_traces_index(
     temp_dir: &TempDir,
     metastore: Arc<dyn Metastore>,
     ingester_service: &Mailbox<IngestApiService>,
-    indexer_service: &Mailbox<IndexingService>,
+    indexer_service: &Mailbox<IndexingPipelineManager>,
 ) {
     let index_root_uri: Uri = format!("{}", temp_dir.path().join("indexes").display())
         .parse()

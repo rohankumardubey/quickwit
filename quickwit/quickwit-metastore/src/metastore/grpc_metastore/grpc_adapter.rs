@@ -20,19 +20,19 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use itertools::Itertools;
 use quickwit_config::IndexConfig;
 use quickwit_proto::metastore::metastore_service_server::{self as grpc};
 use quickwit_proto::metastore::{
-    AddSourceRequest, CreateIndexRequest, CreateIndexResponse, DeleteIndexRequest,
-    DeleteIndexResponse, DeleteQuery, DeleteSourceRequest, DeleteSplitsRequest, DeleteTask,
-    IndexMetadataRequest, IndexMetadataResponse, LastDeleteOpstampRequest,
+    AddSourceRequest, CloseShardsRequest, CloseShardsResponse, CloseShardsResponse,
+    CreateIndexRequest, CreateIndexResponse, DeleteIndexRequest, DeleteIndexResponse, DeleteQuery,
+    DeleteShardsRequest, DeleteShardsResponse, DeleteSourceRequest, DeleteSplitsRequest,
+    DeleteTask, IndexMetadataRequest, IndexMetadataResponse, LastDeleteOpstampRequest,
     LastDeleteOpstampResponse, ListAllSplitsRequest, ListDeleteTasksRequest,
     ListDeleteTasksResponse, ListIndexesMetadatasRequest, ListIndexesMetadatasResponse,
-    ListSplitsRequest, ListSplitsResponse, ListStaleSplitsRequest, MarkSplitsForDeletionRequest,
-    PublishSplitsRequest, ResetSourceCheckpointRequest, SourceResponse, SplitResponse,
-    StageSplitsRequest, ToggleSourceRequest, UpdateSplitsDeleteOpstampRequest,
-    UpdateSplitsDeleteOpstampResponse,
+    ListShardsRequest, ListShardsResponse, ListSplitsRequest, ListSplitsResponse,
+    ListStaleSplitsRequest, MarkSplitsForDeletionRequest, OpenShardsRequest, PublishSplitsRequest,
+    ResetSourceCheckpointRequest, SourceResponse, SplitResponse, StageSplitsRequest,
+    ToggleSourceRequest, UpdateSplitsDeleteOpstampRequest, UpdateSplitsDeleteOpstampResponse,
 };
 use quickwit_proto::tonic::{Request, Response, Status};
 use quickwit_proto::{set_parent_span_from_request_metadata, tonic};
@@ -205,16 +205,17 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<SplitResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let publish_request = request.into_inner();
-        let split_ids = publish_request
-            .split_ids
+        let index_uid = publish_request.index_uid.into();
+        let staged_split_ids: Vec<&str> = publish_request
+            .staged_split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
-        let replaced_split_ids = publish_request
+            .collect();
+        let replaced_split_ids: Vec<&str> = publish_request
             .replaced_split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let checkpoint_delta_opt = publish_request
             .index_checkpoint_delta_serialized_json
             .map(|json| serde_json::from_str(&json))
@@ -223,13 +224,15 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
                 struct_name: "IndexCheckpointDelta".to_string(),
                 message: error.to_string(),
             })?;
+        let publish_token = publish_request.publish_token;
         let publish_splits_reply = self
             .0
             .publish_splits(
-                publish_request.index_uid.into(),
-                &split_ids,
+                index_uid,
+                &staged_split_ids,
                 &replaced_split_ids,
                 checkpoint_delta_opt,
+                publish_token,
             )
             .await
             .map(|_| SplitResponse {})?;
@@ -243,11 +246,11 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<SplitResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let mark_splits_for_deletion_request = request.into_inner();
-        let split_ids = mark_splits_for_deletion_request
+        let split_ids: Vec<&str> = mark_splits_for_deletion_request
             .split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let mark_splits_for_deletion_reply = self
             .0
             .mark_splits_for_deletion(
@@ -266,11 +269,11 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<SplitResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let delete_splits_request = request.into_inner();
-        let split_ids = delete_splits_request
+        let split_ids: Vec<&str> = delete_splits_request
             .split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let delete_splits_reply = self
             .0
             .delete_splits(delete_splits_request.index_uid.into(), &split_ids)
@@ -383,11 +386,11 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
     ) -> Result<tonic::Response<UpdateSplitsDeleteOpstampResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
         let request = request.into_inner();
-        let split_ids = request
+        let split_ids: Vec<&str> = request
             .split_ids
             .iter()
             .map(|split_id| split_id.as_str())
-            .collect_vec();
+            .collect();
         let reply = self
             .0
             .update_splits_delete_opstamp(
@@ -413,7 +416,7 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
             .await?
             .into_iter()
             .map(DeleteTask::from)
-            .collect_vec();
+            .collect();
         let reply = ListDeleteTasksResponse { delete_tasks };
         Ok(tonic::Response::new(reply))
     }
@@ -442,5 +445,48 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
                 message: error.to_string(),
             })?;
         Ok(tonic::Response::new(reply))
+    }
+
+    #[instrument(skip(self, request))]
+    async fn open_shards(
+        &self,
+        request: tonic::Request<OpenShardsRequest>,
+    ) -> Result<tonic::Response<CloseShardsResponse>, tonic::Status> {
+        set_parent_span_from_request_metadata(request.metadata());
+
+        let response = self.0.open_shards(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
+    }
+
+    #[instrument(skip(self, request))]
+    async fn close_shards(
+        &self,
+        request: tonic::Request<CloseShardsRequest>,
+    ) -> Result<tonic::Response<CloseShardsResponse>, tonic::Status> {
+        set_parent_span_from_request_metadata(request.metadata());
+
+        let response = self.0.close_shards(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
+    }
+
+    #[instrument(skip(self, request))]
+    async fn delete_shards(
+        &self,
+        request: tonic::Request<DeleteShardsRequest>,
+    ) -> Result<tonic::Response<DeleteShardsResponse>, tonic::Status> {
+        set_parent_span_from_request_metadata(request.metadata());
+
+        let response = self.0.delete_shards(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
+    }
+    #[instrument(skip(self, request))]
+    async fn list_shards(
+        &self,
+        request: tonic::Request<ListShardsRequest>,
+    ) -> Result<tonic::Response<ListShardsResponse>, tonic::Status> {
+        set_parent_span_from_request_metadata(request.metadata());
+
+        let response = self.0.list_shards(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
     }
 }

@@ -84,4 +84,5 @@ generate_req_enum!(
     UpdateSplitsDeleteOpstampRequest,
     ListDeleteTasksRequest,
     ListStaleSplitsRequest,
+    OpenShardsRequest,
 );

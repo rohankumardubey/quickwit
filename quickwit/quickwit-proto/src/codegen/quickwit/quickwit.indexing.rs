@@ -5,31 +5,32 @@ pub struct ApplyIndexingPlanRequest {
     #[prost(message, repeated, tag = "1")]
     pub indexing_tasks: ::prost::alloc::vec::Vec<IndexingTask>,
 }
-#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ApplyIndexingPlanResponse {}
 #[derive(Eq, Hash)]
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IndexingTask {
-    /// / Index UID of the task.
     #[prost(string, tag = "1")]
     pub index_uid: ::prost::alloc::string::String,
-    /// / Source ID of the task.
     #[prost(string, tag = "2")]
     pub source_id: ::prost::alloc::string::String,
+    #[prost(uint64, repeated, tag = "3")]
+    pub shard_ids: ::prost::alloc::vec::Vec<u64>,
 }
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApplyIndexingPlanResponse {}
 /// BEGIN quickwit-codegen
 use tower::{Layer, Service, ServiceExt};
+use quickwit_common::tower::BoxFuture;
 #[cfg_attr(any(test, feature = "testsuite"), mockall::automock)]
 #[async_trait::async_trait]
 pub trait IndexingService: std::fmt::Debug + dyn_clone::DynClone + Send + Sync + 'static {
     async fn apply_indexing_plan(
         &mut self,
         request: ApplyIndexingPlanRequest,
-    ) -> crate::indexing::Result<ApplyIndexingPlanResponse>;
+    ) -> crate::indexing::IndexingResult<ApplyIndexingPlanResponse>;
 }
 dyn_clone::clone_trait_object!(IndexingService);
 #[cfg(any(test, feature = "testsuite"))]
@@ -91,12 +92,12 @@ impl IndexingService for IndexingServiceClient {
     async fn apply_indexing_plan(
         &mut self,
         request: ApplyIndexingPlanRequest,
-    ) -> crate::indexing::Result<ApplyIndexingPlanResponse> {
+    ) -> crate::indexing::IndexingResult<ApplyIndexingPlanResponse> {
         self.inner.apply_indexing_plan(request).await
     }
 }
 #[cfg(any(test, feature = "testsuite"))]
-pub mod mock {
+pub mod indexing_service_mock {
     use super::*;
     #[derive(Debug, Clone)]
     struct MockIndexingServiceWrapper {
@@ -107,7 +108,7 @@ pub mod mock {
         async fn apply_indexing_plan(
             &mut self,
             request: ApplyIndexingPlanRequest,
-        ) -> crate::indexing::Result<ApplyIndexingPlanResponse> {
+        ) -> crate::indexing::IndexingResult<ApplyIndexingPlanResponse> {
             self.inner.lock().await.apply_indexing_plan(request).await
         }
     }
@@ -120,9 +121,6 @@ pub mod mock {
         }
     }
 }
-pub type BoxFuture<T, E> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<T, E>> + Send + 'static>,
->;
 impl tower::Service<ApplyIndexingPlanRequest> for Box<dyn IndexingService> {
     type Response = ApplyIndexingPlanResponse;
     type Error = crate::indexing::IndexingError;
@@ -160,7 +158,7 @@ impl IndexingService for IndexingServiceTowerBlock {
     async fn apply_indexing_plan(
         &mut self,
         request: ApplyIndexingPlanRequest,
-    ) -> crate::indexing::Result<ApplyIndexingPlanResponse> {
+    ) -> crate::indexing::IndexingResult<ApplyIndexingPlanResponse> {
         self.apply_indexing_plan_svc.ready().await?.call(request).await
     }
 }
@@ -341,7 +339,7 @@ where
     async fn apply_indexing_plan(
         &mut self,
         request: ApplyIndexingPlanRequest,
-    ) -> crate::indexing::Result<ApplyIndexingPlanResponse> {
+    ) -> crate::indexing::IndexingResult<ApplyIndexingPlanResponse> {
         self.call(request).await
     }
 }
@@ -370,7 +368,7 @@ where
     async fn apply_indexing_plan(
         &mut self,
         request: ApplyIndexingPlanRequest,
-    ) -> crate::indexing::Result<ApplyIndexingPlanResponse> {
+    ) -> crate::indexing::IndexingResult<ApplyIndexingPlanResponse> {
         self.inner
             .apply_indexing_plan(request)
             .await
@@ -509,14 +507,14 @@ pub mod indexing_service_grpc_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/quickwit.indexing.IndexingService/applyIndexingPlan",
+                "/quickwit.indexing.IndexingService/ApplyIndexingPlan",
             );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new(
                         "quickwit.indexing.IndexingService",
-                        "applyIndexingPlan",
+                        "ApplyIndexingPlan",
                     ),
                 );
             self.inner.unary(req, path, codec).await
@@ -618,13 +616,13 @@ pub mod indexing_service_grpc_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/quickwit.indexing.IndexingService/applyIndexingPlan" => {
+                "/quickwit.indexing.IndexingService/ApplyIndexingPlan" => {
                     #[allow(non_camel_case_types)]
-                    struct applyIndexingPlanSvc<T: IndexingServiceGrpc>(pub Arc<T>);
+                    struct ApplyIndexingPlanSvc<T: IndexingServiceGrpc>(pub Arc<T>);
                     impl<
                         T: IndexingServiceGrpc,
                     > tonic::server::UnaryService<super::ApplyIndexingPlanRequest>
-                    for applyIndexingPlanSvc<T> {
+                    for ApplyIndexingPlanSvc<T> {
                         type Response = super::ApplyIndexingPlanResponse;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
@@ -648,7 +646,7 @@ pub mod indexing_service_grpc_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let inner = inner.0;
-                        let method = applyIndexingPlanSvc(inner);
+                        let method = ApplyIndexingPlanSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

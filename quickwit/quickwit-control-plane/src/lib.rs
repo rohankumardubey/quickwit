@@ -18,13 +18,14 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 pub mod control_plane;
+pub mod indexing;
 pub mod indexing_plan;
+pub mod ingest;
 pub mod scheduler;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use quickwit_actors::{Mailbox, Universe};
 use quickwit_common::pubsub::EventSubscriber;
 use quickwit_common::tower::Pool;
 use quickwit_config::SourceParams;
@@ -32,7 +33,8 @@ use quickwit_metastore::{Metastore, MetastoreEvent};
 use quickwit_proto::control_plane::{
     ControlPlaneService, ControlPlaneServiceClient, NotifyIndexChangeRequest,
 };
-use quickwit_proto::indexing::{IndexingServiceClient, IndexingTask};
+use quickwit_proto::indexing::{IndexingServiceClient, IndexingTask, IndexingTask};
+use quickwit_proto::types::NodeId;
 use scheduler::IndexingScheduler;
 use tracing::error;
 
@@ -47,9 +49,9 @@ pub type IndexerPool = Pool<String, IndexerNodeInfo>;
 
 /// Starts the Control Plane.
 pub async fn start_indexing_scheduler(
-    cluster_id: String,
-    self_node_id: String,
     universe: &Universe,
+    cluster_id: String,
+    self_node_id: NodeId,
     indexer_pool: IndexerPool,
     metastore: Arc<dyn Metastore>,
 ) -> anyhow::Result<Mailbox<IndexingScheduler>> {
@@ -79,7 +81,7 @@ impl EventSubscriber<MetastoreEvent> for ControlPlaneEventSubscriber {
             MetastoreEvent::AddSource { source_config, .. } => {
                 if matches!(
                     source_config.source_params,
-                    SourceParams::File(_) | SourceParams::IngestCli
+                    SourceParams::File(_) | SourceParams::LocalIngest
                 ) {
                     return;
                 }
@@ -105,6 +107,7 @@ mod tests {
     use quickwit_proto::IndexUid;
 
     use super::*;
+    use crate::proto::control_plane::{ControlPlaneServiceClient, NotifyIndexChangeResponse};
 
     #[tokio::test]
     async fn test_metastore_event_handler() {
@@ -131,7 +134,7 @@ mod tests {
 
         let event = MetastoreEvent::AddSource {
             index_uid: index_uid.clone(),
-            source_config: SourceConfig::for_test("test-source", SourceParams::IngestCli),
+            source_config: SourceConfig::for_test("test-source", SourceParams::LocalIngest),
         };
         control_plane_event_subscriber.handle_event(event).await;
     }

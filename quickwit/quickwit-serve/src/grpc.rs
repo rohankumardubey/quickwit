@@ -24,7 +24,8 @@ use std::sync::Arc;
 use quickwit_common::tower::BoxFutureInfaillible;
 use quickwit_config::service::QuickwitService;
 use quickwit_ingest::ingest_service_grpc_server::IngestServiceGrpcServer;
-use quickwit_ingest::IngestServiceGrpcServerAdapter;
+use quickwit_ingest::ingester_service_grpc_server::IngesterServiceGrpcServer;
+use quickwit_ingest::{IngestServiceGrpcServerAdapter, IngesterServiceGrpcServerAdapter};
 use quickwit_jaeger::JaegerService;
 use quickwit_metastore::GrpcMetastoreAdapter;
 use quickwit_opentelemetry::otlp::{OtlpGrpcLogsService, OtlpGrpcTracesService};
@@ -36,7 +37,9 @@ use quickwit_proto::jaeger::storage::v1::span_reader_plugin_server::SpanReaderPl
 use quickwit_proto::metastore::metastore_service_server::MetastoreServiceServer;
 use quickwit_proto::opentelemetry::proto::collector::logs::v1::logs_service_server::LogsServiceServer;
 use quickwit_proto::opentelemetry::proto::collector::trace::v1::trace_service_server::TraceServiceServer;
+use quickwit_proto::search::search_service_server::SearchServiceServer;
 use quickwit_proto::search_service_server::SearchServiceServer;
+use quickwit_proto::tonic;
 use quickwit_proto::tonic::codegen::CompressionEncoding;
 use quickwit_proto::tonic::transport::Server;
 use tracing::*;
@@ -85,6 +88,10 @@ pub(crate) async fn start_grpc_server(
     } else {
         None
     };
+    let ingester_grpc_service = services.ingester_opt.clone().map(|ingester| {
+        let ingester_adapter = IngesterServiceGrpcServerAdapter::new(ingester);
+        IngesterServiceGrpcServer::new(ingester_adapter)
+    });
     // Mount gRPC control plane service if `QuickwitService::ControlPlane` is enabled on node.
     let control_plane_grpc_service = if services.services.contains(&QuickwitService::ControlPlane) {
         if let Some(control_plane_client) = &services.control_plane_service {
@@ -150,6 +157,7 @@ pub(crate) async fn start_grpc_server(
         .add_optional_service(control_plane_grpc_service)
         .add_optional_service(indexing_grpc_service)
         .add_optional_service(ingest_api_grpc_service)
+        .add_optional_service(ingester_grpc_service)
         .add_optional_service(otlp_log_grpc_service)
         .add_optional_service(otlp_trace_service)
         .add_optional_service(search_grpc_service)

@@ -339,7 +339,7 @@ impl<A: Actor> Mailbox<A> {
             .await
             .map_err(|_send_error| AskError::MessageNotDelivered)?
             .await
-            .map_err(|_| AskError::ProcessMessageError)?
+            .map_err(|_recv_error| AskError::ProcessMessageError)?
             .map_err(AskError::from)
     }
 }

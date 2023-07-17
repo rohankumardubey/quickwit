@@ -44,8 +44,8 @@ use crate::BuildInfo;
 /// should be registered.
 pub fn elastic_api_handlers(
     node_config: Arc<NodeConfig>,
-    search_service: Arc<dyn SearchService>,
     ingest_service: IngestServiceClient,
+    search_service: Arc<dyn SearchService>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     es_compat_cluster_info_handler(node_config, BuildInfo::get())
         .or(es_compat_search_handler(search_service.clone()))
@@ -117,7 +117,7 @@ mod tests {
         mock_search_service
             .expect_root_search()
             .with(predicate::function(
-                |search_request: &quickwit_proto::SearchRequest| {
+                |search_request: &quickwit_proto::search::SearchRequest| {
                     (search_request.index_id == "index-1"
                         && search_request.start_offset == 5
                         && search_request.max_hits == 20)
@@ -129,8 +129,8 @@ mod tests {
             .returning(|_| Ok(Default::default()));
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {"index":"index-1"}
@@ -172,8 +172,8 @@ mod tests {
             });
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {"index":"index-1"}
@@ -207,8 +207,8 @@ mod tests {
         let mock_search_service = MockSearchService::new();
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {"index":"index-1"
@@ -235,8 +235,8 @@ mod tests {
         let mock_search_service = MockSearchService::new();
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {"index":"index-1"}
@@ -263,8 +263,8 @@ mod tests {
         let mock_search_service = MockSearchService::new();
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {"index":"index-1"}
@@ -290,8 +290,8 @@ mod tests {
         let mock_search_service = MockSearchService::new();
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {}
@@ -316,8 +316,8 @@ mod tests {
         let mock_search_service = MockSearchService::new();
         let es_search_api_handler = super::elastic_api_handlers(
             config,
-            Arc::new(mock_search_service),
             ingest_service_client(),
+            Arc::new(mock_search_service),
         );
         let msearch_payload = r#"
             {"index": ["index-1", "index-2"]}

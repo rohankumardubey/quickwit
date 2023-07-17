@@ -41,7 +41,7 @@ use quickwit_common::fs::get_cache_directory_path;
 use quickwit_common::rand::append_random_suffix;
 use quickwit_common::uri::Uri;
 use quickwit_config::{SourceInputFormat, CLI_INGEST_SOURCE_ID};
-use quickwit_metastore::{MetastoreError, MetastoreResolver, SplitState};
+use quickwit_metastore::{EntityKind, MetastoreError, MetastoreResolver, SplitState};
 use serde_json::{json, Number, Value};
 use tokio::time::{sleep, Duration};
 
@@ -184,12 +184,10 @@ async fn test_cmd_ingest_on_non_existing_index() {
     };
 
     let error = local_ingest_docs_cli(args).await.unwrap_err();
+    let typed_error = error.root_cause().downcast_ref::<MetastoreError>().unwrap();
 
-    assert_eq!(
-        error.root_cause().downcast_ref::<MetastoreError>().unwrap(),
-        &MetastoreError::IndexDoesNotExist {
-            index_id: "index-does-not-exist".to_string()
-        }
+    assert!(
+        matches!(typed_error, MetastoreError::NotFound(EntityKind::Index { index_id }) if index_id == "index-does-not-exist")
     );
 }
 

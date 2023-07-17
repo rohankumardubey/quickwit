@@ -36,6 +36,7 @@ macro_rules! bench_func {
                             docs,
                             checkpoint_delta: checkpoint_delta.clone(),
                             force_commit: false,
+                            assignee_id: None,
                         })
                         .await
                         .unwrap();

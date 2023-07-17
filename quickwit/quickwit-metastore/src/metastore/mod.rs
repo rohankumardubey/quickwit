@@ -35,11 +35,15 @@ pub use index_metadata::IndexMetadata;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
-use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
+use quickwit_proto::metastore::{
+    CloseShardsRequest, CloseShardsResponse, CloseShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, ListShardsRequest, ListShardsResponse, OpenShardsRequest,
+};
 use quickwit_proto::IndexUid;
 use time::OffsetDateTime;
 
 use crate::checkpoint::IndexCheckpointDelta;
+use crate::error::EntityKind;
 use crate::{MetastoreError, MetastoreResult, Split, SplitMetadata, SplitState};
 
 /// Metastore meant to manage Quickwit's indexes, their splits and delete tasks.
@@ -109,7 +113,7 @@ pub trait Metastore: Send + Sync + 'static {
     async fn index_exists(&self, index_id: &str) -> MetastoreResult<bool> {
         match self.index_metadata(index_id).await {
             Ok(_) => Ok(true),
-            Err(MetastoreError::IndexDoesNotExist { .. }) => Ok(false),
+            Err(MetastoreError::NotFound { .. }) => Ok(false),
             Err(error) => Err(error),
         }
     }
@@ -129,9 +133,9 @@ pub trait Metastore: Send + Sync + 'static {
         let index_metadata = self.index_metadata(index_uid.index_id()).await?;
 
         if index_metadata.index_uid != *index_uid {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_uid.index_id().to_string(),
-            });
+            }));
         }
         Ok(index_metadata)
     }
@@ -182,6 +186,7 @@ pub trait Metastore: Send + Sync + 'static {
         staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        publish_token: Option<String>,
     ) -> MetastoreResult<()>;
 
     /// Lists the splits.
@@ -307,6 +312,23 @@ pub trait Metastore: Send + Sync + 'static {
         index_uid: IndexUid,
         opstamp_start: u64,
     ) -> MetastoreResult<Vec<DeleteTask>>;
+
+    // Shard API
+
+    async fn open_shards(&self, request: OpenShardsRequest)
+        -> MetastoreResult<CloseShardsResponse>;
+
+    async fn close_shards(
+        &self,
+        request: CloseShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse>;
+
+    async fn delete_shards(
+        &self,
+        request: DeleteShardsRequest,
+    ) -> MetastoreResult<DeleteShardsResponse>;
+
+    async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse>;
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

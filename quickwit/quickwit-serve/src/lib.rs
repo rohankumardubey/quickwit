@@ -46,6 +46,7 @@ use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{env, fs};
 
 use anyhow::anyhow;
 use byte_unit::n_mib_bytes;
@@ -68,10 +69,13 @@ use quickwit_control_plane::{
     start_indexing_scheduler, ControlPlaneEventSubscriber, IndexerNodeInfo, IndexerPool,
 };
 use quickwit_index_management::{IndexService, IndexServiceError};
-use quickwit_indexing::actors::IndexingService;
+use quickwit_indexing::actors::{IndexingPipelineManager, IndexingService};
+use quickwit_indexing::indexing_client::IndexingServiceClient;
 use quickwit_indexing::start_indexing_service;
 use quickwit_ingest::{
-    start_ingest_api_service, GetMemoryCapacity, IngestRequest, IngestServiceClient, MemoryCapacity,
+    start_ingest_api_service, GetMemoryCapacity, IngestRequest, IngestRouter,
+    IngestRouterServiceClient, IngestServiceClient, Ingester, IngesterPool, IngesterServiceClient,
+    MemoryCapacity,
 };
 use quickwit_janitor::{start_janitor_service, JanitorService};
 use quickwit_metastore::{
@@ -81,6 +85,7 @@ use quickwit_metastore::{
 use quickwit_opentelemetry::otlp::{OtlpGrpcLogsService, OtlpGrpcTracesService};
 use quickwit_proto::control_plane::ControlPlaneServiceClient;
 use quickwit_proto::indexing::IndexingServiceClient;
+use quickwit_proto::types::NodeId;
 use quickwit_search::{
     create_search_client_from_channel, start_searcher_service, SearchJobPlacer, SearchService,
     SearchServiceClient, SearcherPool,
@@ -89,7 +94,7 @@ use quickwit_storage::StorageResolver;
 use tokio::sync::oneshot;
 use tower::timeout::Timeout;
 use tower::ServiceBuilder;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 use warp::{Filter, Rejection};
 
 pub use crate::build_info::{BuildInfo, RuntimeInfo};
@@ -118,9 +123,11 @@ struct QuickwitServices {
     /// It is only used to serve the rest API calls and will only execute
     /// the root requests.
     pub search_service: Arc<dyn SearchService>,
-    pub indexing_service: Option<Mailbox<IndexingService>>,
+    pub indexing_service: Option<Mailbox<IndexingPipelineManager>>,
     pub janitor_service: Option<Mailbox<JanitorService>>,
     pub ingest_service: IngestServiceClient,
+    pub ingest_router: IngestRouterServiceClient,
+    pub ingester_opt: Option<IngesterServiceClient>,
     pub index_service: Arc<IndexService>,
     pub services: HashSet<QuickwitService>,
 }
@@ -190,8 +197,7 @@ pub async fn serve_quickwit(
             })?;
         let balance_channel =
             balance_channel_for_service(&cluster, QuickwitService::Metastore).await;
-        let grpc_metastore_client =
-            MetastoreGrpcClient::from_balance_channel(balance_channel).await?;
+        let grpc_metastore_client = MetastoreGrpcClient::from_balance_channel(balance_channel)?;
         let metastore_client = RetryingMetastore::new(Box::new(grpc_metastore_client));
         Arc::new(metastore_client)
     };
@@ -209,6 +215,10 @@ pub async fn serve_quickwit(
         storage_resolver.clone(),
     ));
 
+    // Ingest V2
+    let (ingest_router, ingester_pool, ingester_opt) =
+        setup_ingest_v2(&config, &cluster, metastore.clone()).await?;
+
     let (ingest_service, indexing_service) = if config
         .enabled_services
         .contains(&QuickwitService::Indexer)
@@ -224,13 +234,24 @@ pub async fn serve_quickwit(
             for index_config in [otel_logs_index_config, otel_traces_index_config] {
                 match index_service.create_index(index_config, false).await {
                     Ok(_)
-                    | Err(IndexServiceError::MetastoreError(
-                        MetastoreError::IndexAlreadyExists { .. },
-                    )) => Ok(()),
+                    | Err(IndexServiceError::MetastoreError(MetastoreError::AlreadyExists {
+                        ..
+                    })) => Ok(()),
                     Err(error) => Err(error),
                 }?;
             }
         }
+        let searcher_config = config.searcher_config.clone();
+        let cluster_change_stream = cluster.ready_nodes_change_stream().await;
+
+        let (_search_job_placer, _search_service) = setup_searcher(
+            searcher_config,
+            cluster_change_stream,
+            metastore.clone(),
+            storage_resolver.clone(),
+        )
+        .await?;
+
         let indexing_service = start_indexing_service(
             &universe,
             &config,
@@ -238,6 +259,7 @@ pub async fn serve_quickwit(
             cluster.clone(),
             metastore.clone(),
             ingest_api_service.clone(),
+            ingester_pool.clone(),
             storage_resolver.clone(),
         )
         .await?;
@@ -276,10 +298,10 @@ pub async fn serve_quickwit(
         .contains(&QuickwitService::ControlPlane)
     {
         let cluster_change_stream = cluster.ready_nodes_change_stream().await;
-        let control_plane_mailbox = start_control_plane(
+        let control_plane_mailbox = setup_control_plane(
             &universe,
             cluster.cluster_id().to_string(),
-            cluster.self_node_id().to_string(),
+            cluster.self_node_id().into(),
             cluster_change_stream,
             indexing_service.clone(),
             metastore.clone(),
@@ -341,6 +363,8 @@ pub async fn serve_quickwit(
         indexing_service,
         janitor_service,
         ingest_service,
+        ingest_router,
+        ingester_opt,
         index_service,
         services,
     });
@@ -479,6 +503,80 @@ where R: Rate
     }
 }
 
+async fn setup_ingest_v2(
+    config: &NodeConfig,
+    cluster: &Cluster,
+    _metastore: Arc<dyn Metastore>,
+) -> anyhow::Result<(
+    IngestRouterServiceClient,
+    IngesterPool,
+    Option<IngesterServiceClient>,
+)> {
+    let replication_factor = env::var("QW_INGEST_REPLICATION_FACTOR")
+        .ok()
+        .and_then(|replication_factor_str| replication_factor_str.parse::<usize>().ok())
+        .unwrap_or(1)
+        .min(2)
+        .max(1);
+
+    // Instantiate ingester pool.
+    let ingester_pool = IngesterPool::default();
+
+    // Instantiate ingest router.
+    let node_id: NodeId = cluster.self_node_id().into();
+    let ingest_router =
+        IngestRouter::new(node_id.clone(), ingester_pool.clone(), replication_factor);
+    let ingest_router_client = IngestRouterServiceClient::new(ingest_router);
+
+    // Instantiate ingester.
+    let ingester_client_opt = if config.enabled_services.contains(&QuickwitService::Indexer) {
+        let wal_dir_path = config.data_dir_path.join("wal");
+        fs::create_dir_all(&wal_dir_path)?;
+
+        let ingester = Ingester::try_new(
+            node_id.clone(),
+            ingester_pool.clone(),
+            // metastore,
+            &wal_dir_path,
+            replication_factor,
+        )
+        .await?;
+        let ingester_client = IngesterServiceClient::new(ingester);
+        Some(ingester_client)
+    } else {
+        None
+    };
+    // Setup ingester pool change stream.
+    let ingester_client_opt_clone = ingester_client_opt.clone();
+    let cluster_change_stream = cluster.ready_nodes_change_stream().await;
+    let ingester_change_stream = cluster_change_stream.filter_map(move |cluster_change| {
+        let ingester_client_opt = ingester_client_opt_clone.clone();
+        Box::pin(async move {
+            match cluster_change {
+                ClusterChange::Add(node)
+                    if node.enabled_services().contains(&QuickwitService::Indexer) =>
+                {
+                    let node_id: NodeId = node.node_id().into();
+
+                    if node.is_self_node() {
+                        let ingester_client = ingester_client_opt
+                            .expect("The ingester client should be instantiated.");
+                        Some(Change::Insert(node_id, ingester_client))
+                    } else {
+                        let timeout_channel = Timeout::new(node.channel(), Duration::from_secs(30));
+                        let ingester = IngesterServiceClient::from_channel(timeout_channel);
+                        Some(Change::Insert(node_id, ingester))
+                    }
+                }
+                ClusterChange::Remove(node) => Some(Change::Remove(node.node_id().into())),
+                _ => None,
+            }
+        })
+    });
+    ingester_pool.listen_for_changes(ingester_change_stream);
+    Ok((ingest_router_client, ingester_pool, ingester_client_opt))
+}
+
 async fn setup_searcher(
     searcher_config: SearcherConfig,
     cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
@@ -524,12 +622,12 @@ async fn setup_searcher(
     Ok((search_job_placer, search_service))
 }
 
-async fn start_control_plane(
+async fn setup_control_plane(
     universe: &Universe,
     cluster_id: String,
-    self_node_id: String,
+    self_node_id: NodeId,
     cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
-    indexing_service: Option<Mailbox<IndexingService>>,
+    indexing_service: Option<Mailbox<IndexingPipelineManager>>,
     metastore: Arc<dyn Metastore>,
 ) -> anyhow::Result<Mailbox<ControlPlane>> {
     let scheduler = setup_indexing_scheduler(
@@ -551,7 +649,6 @@ fn setup_indexer_pool(
     indexing_service: Option<Mailbox<IndexingService>>,
 ) -> IndexerPool {
     let indexer_pool = IndexerPool::default();
-
     let indexer_change_stream = cluster_change_stream.filter_map(move |cluster_change| {
         let indexing_service_clone = indexing_service.clone();
         Box::pin(async move {
@@ -649,14 +746,10 @@ async fn node_readiness_reporting_task(
         // the gRPC server failed.
         return;
     };
-    info!("gRPC server is ready.");
-
     if rest_readiness_signal_rx.await.is_err() {
         // the REST server failed.
         return;
     };
-    info!("REST server is ready.");
-
     let mut interval = tokio::time::interval(READINESS_REPORTING_INTERVAL);
 
     loop {

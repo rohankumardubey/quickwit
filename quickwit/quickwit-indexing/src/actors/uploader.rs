@@ -17,9 +17,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashSet;
-use std::iter::FromIterator;
-use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -326,7 +323,7 @@ impl Handler<PackagedSplitBatch> for Uploader {
                 metastore
                     .stage_splits(index_uid.clone(), split_metadata_list.clone())
                     .await?;
-                counters.num_staged_splits.fetch_add(split_metadata_list.len() as u64, Ordering::SeqCst);
+                counters.num_staged_splits.fetch_add(split_metadata_list.len() as u64, Ordering::Relaxed);
 
                 let mut packaged_splits_and_metadata = Vec::with_capacity(batch.splits.len());
                 for (packaged_split, metadata) in batch.splits.into_iter().zip(split_metadata_list) {
@@ -349,9 +346,10 @@ impl Handler<PackagedSplitBatch> for Uploader {
 
                 let splits_update = make_publish_operation(
                     index_uid,
-                    batch.publish_lock,
                     packaged_splits_and_metadata,
                     batch.checkpoint_delta_opt,
+                    batch.publish_lock,
+                    batch.publish_token,
                     batch.merge_operation,
                     batch.parent_span,
                 );
@@ -359,7 +357,7 @@ impl Handler<PackagedSplitBatch> for Uploader {
                 split_update_sender.send(splits_update, &ctx_clone).await?;
                 // We explicitly drop it in order to force move the permit guard into the async
                 // task.
-                mem::drop(permit_guard);
+                drop(permit_guard);
                 Result::<(), anyhow::Error>::Ok(())
             }
             .instrument(Span::current()),
@@ -393,6 +391,7 @@ impl Handler<EmptySplit> for Uploader {
             replaced_split_ids: Vec::new(),
             checkpoint_delta_opt: Some(empty_split.checkpoint_delta),
             publish_lock: empty_split.publish_lock,
+            publish_token: empty_split.publish_token,
             merge_operation: None,
             parent_span: empty_split.batch_parent_span,
         };
@@ -404,26 +403,34 @@ impl Handler<EmptySplit> for Uploader {
 
 fn make_publish_operation(
     index_uid: IndexUid,
-    publish_lock: PublishLock,
     packaged_splits_and_metadatas: Vec<(PackagedSplit, SplitMetadata)>,
     checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+    publish_lock: PublishLock,
+    publish_token: Option<String>,
     merge_operation: Option<TrackedObject<MergeOperation>>,
     parent_span: Span,
 ) -> SplitsUpdate {
     assert!(!packaged_splits_and_metadatas.is_empty());
+
     let replaced_split_ids = packaged_splits_and_metadatas
         .iter()
-        .flat_map(|(split, _)| split.split_attrs.replaced_split_ids.clone())
-        .collect::<HashSet<_>>();
+        .flat_map(|(split, _)| split.split_attrs.replaced_split_ids.iter().cloned())
+        .sorted()
+        .dedup()
+        .collect();
+
+    let new_splits = packaged_splits_and_metadatas
+        .into_iter()
+        .map(|(_, meta)| meta)
+        .collect();
+
     SplitsUpdate {
         index_uid,
-        publish_lock,
-        new_splits: packaged_splits_and_metadatas
-            .into_iter()
-            .map(|split_and_meta| split_and_meta.1)
-            .collect_vec(),
-        replaced_split_ids: Vec::from_iter(replaced_split_ids),
+        new_splits,
+        replaced_split_ids,
         checkpoint_delta_opt,
+        publish_lock,
+        publish_token,
         merge_operation,
         parent_span,
     }
@@ -539,6 +546,7 @@ mod tests {
                 }],
                 checkpoint_delta_opt,
                 PublishLock::default(),
+                None,
                 None,
                 Span::none(),
             ))
@@ -674,6 +682,7 @@ mod tests {
                 None,
                 PublishLock::default(),
                 None,
+                None,
                 Span::none(),
             ))
             .await?;
@@ -785,6 +794,7 @@ mod tests {
                 checkpoint_delta_opt,
                 PublishLock::default(),
                 None,
+                None,
                 Span::none(),
             ))
             .await?;
@@ -835,6 +845,7 @@ mod tests {
                 batch_parent_span: Span::none(),
                 checkpoint_delta,
                 publish_lock: PublishLock::default(),
+                publish_token: None,
             })
             .await?;
         assert_eq!(

@@ -102,9 +102,9 @@ impl From<QueryParserError> for SearchError {
 impl From<MetastoreError> for SearchError {
     fn from(metastore_error: MetastoreError) -> SearchError {
         match metastore_error {
-            MetastoreError::IndexDoesNotExist { index_id } => {
-                SearchError::IndexDoesNotExist { index_id }
-            }
+            MetastoreError::NotFound(entity) => SearchError::IndexDoesNotExist {
+                index_id: entity.entity_id(),
+            },
             _ => SearchError::InternalError(format!("{metastore_error}")),
         }
     }

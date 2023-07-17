@@ -17,27 +17,87 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use std::fmt;
+
 use quickwit_proto::{ServiceError, ServiceErrorCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
 use crate::checkpoint::IncompatibleCheckpointDelta;
 
-/// Metastore error kinds.
+/// The different kinds of objects managed by the metastore.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum EntityKind {
+    /// Index entity.
+    Index {
+        /// Index ID.
+        index_id: String,
+    },
+    /// Source entity.
+    Source {
+        /// Source ID.
+        source_id: String,
+    },
+    /// Shard entity.
+    Shard {
+        /// Shard UID: <index_uid>/<source_id>/<shard_id>
+        queue_id: String,
+    },
+    /// Split entity.
+    Split {
+        /// Split ID.
+        split_id: String,
+    },
+    /// A set of splits.
+    Splits {
+        /// Comma-separated split IDs.
+        split_ids: Vec<String>,
+    },
+}
+
+impl EntityKind {
+    /// Returns the entity ID, for instance the index ID for an index or the source ID for a source.
+    pub fn entity_id(&self) -> String {
+        match self {
+            EntityKind::Index { index_id } => index_id.clone(),
+            EntityKind::Shard { queue_id } => queue_id.clone(),
+            EntityKind::Source { source_id } => source_id.clone(),
+            EntityKind::Split { split_id } => split_id.clone(),
+            EntityKind::Splits { split_ids } => split_ids.join(","),
+        }
+    }
+}
+
+impl fmt::Display for EntityKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EntityKind::Index { index_id } => write!(f, "Index `{}`", index_id),
+            EntityKind::Shard { queue_id: shard_id } => write!(f, "Shard `{}`", shard_id),
+            EntityKind::Source { source_id } => write!(f, "Source `{}`", source_id),
+            EntityKind::Split { split_id } => write!(f, "Split `{}`", split_id),
+            EntityKind::Splits { split_ids } => write!(f, "Splits `{}`", split_ids.join(", ")),
+        }
+    }
+}
+
+/// Metastore error variants.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, ThisError, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MetastoreError {
     #[error("Connection error: `{message}`.")]
     ConnectionError { message: String },
 
-    #[error("Index `{index_id}` already exists.")]
-    IndexAlreadyExists { index_id: String },
+    #[error("Invalid argument: `{0}`")]
+    InvalidArgument(String),
+
+    #[error("{0} not found.")]
+    NotFound(EntityKind),
+
+    #[error("{0} already exists.")]
+    AlreadyExists(EntityKind),
 
     #[error("Access forbidden: `{message}`.")]
     Forbidden { message: String },
-
-    #[error("Index `{index_id}` does not exist.")]
-    IndexDoesNotExist { index_id: String },
 
     /// Any generic internal error.
     /// The message can be helpful to users, but the detail of the error
@@ -48,7 +108,7 @@ pub enum MetastoreError {
     #[error("Failed to deserialize index metadata: `{message}`")]
     InvalidManifest { message: String },
 
-    #[error("IOError `{message}`")]
+    #[error("IO error: `{message}`")]
     Io { message: String },
 
     #[error("Splits `{split_ids:?}` do not exist.")]
@@ -60,17 +120,8 @@ pub enum MetastoreError {
     #[error("Splits `{split_ids:?}` are not staged.")]
     SplitsNotStaged { split_ids: Vec<String> },
 
-    #[error("Publish checkpoint delta overlaps with the current checkpoint: {0:?}.")]
+    #[error("Publish checkpoint delta overlaps with current checkpoint: {0:?}.")]
     IncompatibleCheckpointDelta(#[from] IncompatibleCheckpointDelta),
-
-    #[error("Source `{source_id}` of type `{source_type}` already exists.")]
-    SourceAlreadyExists {
-        source_id: String,
-        source_type: String,
-    },
-
-    #[error("Source `{source_id}` does not exist.")]
-    SourceDoesNotExist { source_id: String },
 
     #[error("Database error: `{message}`.")]
     DbError { message: String },
@@ -109,22 +160,21 @@ impl From<MetastoreError> for quickwit_proto::tonic::Status {
 impl ServiceError for MetastoreError {
     fn status_code(&self) -> ServiceErrorCode {
         match self {
+            Self::AlreadyExists { .. } => ServiceErrorCode::BadRequest,
             Self::ConnectionError { .. } => ServiceErrorCode::Internal,
+            Self::DbError { .. } => ServiceErrorCode::Internal,
             Self::Forbidden { .. } => ServiceErrorCode::MethodNotAllowed,
             Self::IncompatibleCheckpointDelta(_) => ServiceErrorCode::BadRequest,
-            Self::IndexAlreadyExists { .. } => ServiceErrorCode::BadRequest,
-            Self::IndexDoesNotExist { .. } => ServiceErrorCode::NotFound,
             Self::InternalError { .. } => ServiceErrorCode::Internal,
+            Self::InvalidArgument { .. } => ServiceErrorCode::Internal,
             Self::InvalidManifest { .. } => ServiceErrorCode::Internal,
             Self::Io { .. } => ServiceErrorCode::Internal,
-            Self::SourceAlreadyExists { .. } => ServiceErrorCode::BadRequest,
-            Self::SourceDoesNotExist { .. } => ServiceErrorCode::NotFound,
+            Self::JsonDeserializeError { .. } => ServiceErrorCode::Internal,
+            Self::JsonSerializeError { .. } => ServiceErrorCode::Internal,
+            Self::NotFound { .. } => ServiceErrorCode::NotFound,
             Self::SplitsDoNotExist { .. } => ServiceErrorCode::BadRequest,
             Self::SplitsNotDeletable { .. } => ServiceErrorCode::BadRequest,
             Self::SplitsNotStaged { .. } => ServiceErrorCode::BadRequest,
-            Self::DbError { .. } => ServiceErrorCode::Internal,
-            Self::JsonDeserializeError { .. } => ServiceErrorCode::Internal,
-            Self::JsonSerializeError { .. } => ServiceErrorCode::Internal,
         }
     }
 }

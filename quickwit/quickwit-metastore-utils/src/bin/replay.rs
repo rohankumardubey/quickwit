@@ -88,6 +88,9 @@ async fn replay_grpc_request(
         GrpcRequest::ListStaleSplitsRequest(req) => {
             client.list_stale_splits(req).await?;
         }
+        GrpcRequest::OpenShardsRequest(req) => {
+            client.open_shards(req).await?;
+        }
     }
     Ok(())
 }

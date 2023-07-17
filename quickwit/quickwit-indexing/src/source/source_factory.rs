@@ -26,13 +26,13 @@ use quickwit_metastore::checkpoint::SourceCheckpoint;
 use thiserror::Error;
 
 use super::Source;
-use crate::source::SourceExecutionContext;
+use crate::source::SourceRuntimeArgs;
 
 #[async_trait]
 pub trait SourceFactory: 'static + Send + Sync {
     async fn create_source(
         &self,
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Box<dyn Source>>;
 }
@@ -41,8 +41,9 @@ pub trait SourceFactory: 'static + Send + Sync {
 pub trait TypedSourceFactory: Send + Sync + 'static {
     type Source: Source;
     type Params: serde::de::DeserializeOwned + Send + Sync + 'static;
+
     async fn typed_create_source(
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         params: Self::Params,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self::Source>;
@@ -52,7 +53,7 @@ pub trait TypedSourceFactory: Send + Sync + 'static {
 impl<T: TypedSourceFactory> SourceFactory for T {
     async fn create_source(
         &self,
-        ctx: Arc<SourceExecutionContext>,
+        ctx: Arc<SourceRuntimeArgs>,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Box<dyn Source>> {
         let typed_params: T::Params = serde_json::from_value(ctx.source_config.params())?;
@@ -93,20 +94,20 @@ impl SourceLoader {
 
     pub async fn load_source(
         &self,
-        ctx: Arc<SourceExecutionContext>,
+        runtime_args: Arc<SourceRuntimeArgs>,
         checkpoint: SourceCheckpoint,
     ) -> Result<Box<dyn Source>, SourceLoaderError> {
-        let source_type = ctx.source_config.source_type().to_string();
-        let source_id = ctx.source_config.source_id.clone();
+        let source_type = runtime_args.source_config.source_type().to_string();
+        let source_id = runtime_args.source_config.source_id.clone();
         let source_factory = self
             .type_to_factory
-            .get(ctx.source_config.source_type())
+            .get(runtime_args.source_config.source_type())
             .ok_or_else(|| SourceLoaderError::UnknownSourceType {
-                requested_source_type: ctx.source_config.source_type().to_string(),
+                requested_source_type: runtime_args.source_config.source_type().to_string(),
                 available_source_types: self.type_to_factory.keys().join(", "),
             })?;
         source_factory
-            .create_source(ctx, checkpoint)
+            .create_source(runtime_args, checkpoint)
             .await
             .map_err(|error| SourceLoaderError::FailedToCreateSource {
                 source_type,
@@ -131,7 +132,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_source_loader_success() -> anyhow::Result<()> {
-        let metastore = metastore_for_test();
         let source_loader = quickwit_supported_sources();
         let source_config = SourceConfig {
             source_id: "test-source".to_string(),
@@ -142,13 +142,14 @@ mod tests {
             transform_config: None,
             input_format: SourceInputFormat::Json,
         };
+        let metastore = metastore_for_test();
         source_loader
             .load_source(
-                SourceExecutionContext::for_test(
-                    metastore,
+                SourceRuntimeArgs::for_test(
                     IndexUid::new("test-index"),
-                    PathBuf::from("./queues"),
                     source_config,
+                    metastore,
+                    PathBuf::from("./queues"),
                 ),
                 SourceCheckpoint::default(),
             )

@@ -94,7 +94,10 @@ version: 0.6
 #
 # -------------------------------- Metastore settings --------------------------------
 #
-# metastore:
+#  metastore:
+#    file:
+#      polling_interval: 30s
+#
 #   postgres:
 #     max_num_connections: 20
 #

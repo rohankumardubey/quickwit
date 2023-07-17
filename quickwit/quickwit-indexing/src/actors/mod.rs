@@ -17,30 +17,32 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-mod indexing_pipeline;
-mod merge_pipeline;
-
 mod doc_processor;
 mod index_serializer;
 mod indexer;
-mod indexing_service;
+mod indexing_controller_agent;
+mod indexing_pipeline;
+mod indexing_pipeline_manager;
+mod merge_executor;
+mod merge_pipeline;
+mod merge_planner;
+mod merge_split_downloader;
 mod packager;
 mod publisher;
 mod sequencer;
 mod uploader;
 
+#[cfg(feature = "vrl")]
+mod vrl_processing;
+
+pub use indexing_controller_agent::IndexingControllerAgent;
 pub use indexing_pipeline::{IndexingPipeline, IndexingPipelineHandles, IndexingPipelineParams};
-pub use indexing_service::{
-    IndexingService, IndexingServiceCounters, MergePipelineId, INDEXING_DIR_NAME,
+pub use indexing_pipeline_manager::{
+    IndexingPipelineManager, IndexingServiceCounters, IndexingServiceError, MergePipelineId,
+    INDEXING_DIR_NAME,
 };
 pub use quickwit_proto::indexing::IndexingError;
 pub use sequencer::Sequencer;
-mod merge_executor;
-mod merge_planner;
-mod merge_split_downloader;
-
-#[cfg(feature = "vrl")]
-mod vrl_processing;
 
 pub use self::doc_processor::{DocProcessor, DocProcessorCounters};
 pub use self::index_serializer::IndexSerializer;

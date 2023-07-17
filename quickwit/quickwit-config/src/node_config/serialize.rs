@@ -116,12 +116,16 @@ fn default_advertise_host(listen_ip: &IpAddr) -> anyhow::Result<Host> {
 // in  `./qwdata/indexes/{index-id}/metastore.json` and splits in
 // dir `./qwdata/indexes/{index-id}/splits`.
 fn default_metastore_uri(data_dir_uri: &Uri) -> Uri {
-    data_dir_uri.join("indexes#polling_interval=30s").expect("Failed to create default metastore URI. This should never happen! Please, report on https://github.com/quickwit-oss/quickwit/issues.")
+    data_dir_uri
+        .join("indexes#polling_interval=30s")
+        .expect("Data dir should be a file URI.")
 }
 
 // See comment above.
 fn default_index_root_uri(data_dir_uri: &Uri) -> Uri {
-    data_dir_uri.join("indexes").expect("Failed to create default index root URI. This should never happen! Please, report on https://github.com/quickwit-oss/quickwit/issues.")
+    data_dir_uri
+        .join("indexes")
+        .expect("Data dir should be a file URI.")
 }
 
 pub async fn load_node_config_with_env(

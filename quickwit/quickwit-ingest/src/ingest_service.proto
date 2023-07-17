@@ -50,6 +50,7 @@ service IngestService {
   // to the oldest, and stops as soon as `FETCH_PAYLOAD_LIMIT` (2MB)
   // is exceeded.
   rpc Tail(TailRequest) returns (FetchResponse);
+
 }
 
 message QueueExistsRequest {

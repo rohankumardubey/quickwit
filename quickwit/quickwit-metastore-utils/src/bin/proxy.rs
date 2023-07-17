@@ -268,6 +268,18 @@ impl MetastoreService for MetastoreProxyService {
         let resp = lock.client.list_stale_splits(request).await?;
         Ok(resp)
     }
+
+    /// Shard API
+
+    async fn open_shards(
+        &self,
+        request: tonic::Request<OpenShardsRequest>,
+    ) -> Result<tonic::Response<OpenShardsResponse>, tonic::Status> {
+        let mut lock = self.inner.lock().await;
+        lock.record(request.get_ref().clone()).await.unwrap();
+        let resp = lock.client.open_shards(request).await?;
+        Ok(resp)
+    }
 }
 
 #[derive(Debug, StructOpt)]

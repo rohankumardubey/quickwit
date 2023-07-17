@@ -33,19 +33,15 @@ use pulsar::{
 };
 use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
 use quickwit_config::{PulsarSourceAuth, PulsarSourceParams};
-use quickwit_metastore::checkpoint::{
-    PartitionId, Position, SourceCheckpoint, SourceCheckpointDelta,
-};
+use quickwit_metastore::checkpoint::{PartitionId, Position, SourceCheckpoint};
 use quickwit_proto::IndexUid;
 use serde_json::{json, Value as JsonValue};
 use tokio::time;
 use tracing::{debug, info, warn};
 
+use super::BatchBuilder;
 use crate::actors::DocProcessor;
-use crate::models::RawDocBatch;
-use crate::source::{
-    Source, SourceActor, SourceContext, SourceExecutionContext, TypedSourceFactory,
-};
+use crate::source::{Source, SourceActor, SourceContext, SourceRuntimeArgs, TypedSourceFactory};
 
 /// Number of bytes after which we cut a new batch.
 ///
@@ -70,11 +66,11 @@ impl TypedSourceFactory for PulsarSourceFactory {
     type Params = PulsarSourceParams;
 
     async fn typed_create_source(
-        ctx: Arc<SourceExecutionContext>,
+        runtime_args: Arc<SourceRuntimeArgs>,
         params: PulsarSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self::Source> {
-        PulsarSource::try_new(ctx, params, checkpoint).await
+        PulsarSource::try_new(runtime_args, params, checkpoint).await
     }
 }
 
@@ -92,7 +88,7 @@ pub struct PulsarSourceState {
 }
 
 pub struct PulsarSource {
-    ctx: Arc<SourceExecutionContext>,
+    ctx: Arc<SourceRuntimeArgs>,
     pulsar_consumer: PulsarConsumer,
     params: PulsarSourceParams,
     subscription_name: String,
@@ -102,19 +98,21 @@ pub struct PulsarSource {
 
 impl PulsarSource {
     pub async fn try_new(
-        ctx: Arc<SourceExecutionContext>,
+        runtime_args: Arc<SourceRuntimeArgs>,
         params: PulsarSourceParams,
         checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<Self> {
-        let subscription_name = subscription_name(&ctx.index_uid, &ctx.source_config.source_id);
+        let subscription_name = subscription_name(
+            runtime_args.index_uid(),
+            &runtime_args.source_config.source_id,
+        );
         info!(
-            index_id=%ctx.index_uid.index_id(),
-            source_id=%ctx.source_config.source_id,
+            index_id=%runtime_args.index_id(),
+            source_id=%runtime_args.source_config.source_id,
             topics=?params.topics,
             subscription_name=%subscription_name,
-            "Create Pulsar source."
+            "Spawning Pulsar source."
         );
-
         let pulsar = connect_pulsar(&params).await?;
 
         // Current positions are built mapping the topic ID to the last-saved
@@ -133,7 +131,6 @@ impl PulsarSource {
                 }
             }
         }
-
         let pulsar_consumer = create_pulsar_consumer(
             subscription_name.clone(),
             params.clone(),
@@ -143,7 +140,7 @@ impl PulsarSource {
         .await?;
 
         Ok(Self {
-            ctx,
+            ctx: runtime_args,
             params,
             pulsar_consumer,
             subscription_name,
@@ -198,7 +195,7 @@ impl PulsarSource {
             .checkpoint_delta
             .record_partition_delta(partition, current_position, msg_position)
             .context("Failed to record partition delta.")?;
-        batch.push(doc, num_bytes as u64);
+        batch.add_doc(doc);
 
         self.state.num_bytes_processed += num_bytes as u64;
         self.state.num_messages_processed += 1;
@@ -284,7 +281,7 @@ impl Source for PulsarSource {
 
     fn observable_state(&self) -> JsonValue {
         json!({
-            "index_id": self.ctx.index_uid.index_id(),
+            "index_id": self.ctx.index_id(),
             "source_id": self.ctx.source_config.source_id,
             "topics": self.params.topics,
             "subscription_name": self.subscription_name,
@@ -304,28 +301,6 @@ impl DeserializeMessage for PulsarMessage {
 
     fn deserialize_message(payload: &Payload) -> Self::Output {
         Bytes::from(payload.data.clone())
-    }
-}
-
-#[derive(Debug, Default)]
-struct BatchBuilder {
-    docs: Vec<Bytes>,
-    num_bytes: u64,
-    checkpoint_delta: SourceCheckpointDelta,
-}
-
-impl BatchBuilder {
-    fn build(self) -> RawDocBatch {
-        RawDocBatch {
-            docs: self.docs,
-            checkpoint_delta: self.checkpoint_delta,
-            force_commit: false,
-        }
-    }
-
-    fn push(&mut self, doc: Bytes, num_bytes: u64) {
-        self.docs.push(doc);
-        self.num_bytes += num_bytes;
     }
 }
 
@@ -474,9 +449,10 @@ mod pulsar_broker_tests {
     use reqwest::StatusCode;
 
     use super::*;
+    use crate::models::RawDocBatch;
     use crate::new_split_id;
     use crate::source::pulsar_source::{msg_id_from_position, msg_id_to_position};
-    use crate::source::{quickwit_supported_sources, SuggestTruncate};
+    use crate::source::{quickwit_supported_sources, BatchBuilder, SuggestTruncate};
 
     static PULSAR_URI: &str = "pulsar://localhost:6650";
     static PULSAR_ADMIN_URI: &str = "http://localhost:8081";
@@ -541,7 +517,13 @@ mod pulsar_broker_tests {
             source_delta,
         };
         metastore
-            .publish_splits(index_uid.clone(), &[&split_id], &[], Some(index_delta))
+            .publish_splits(
+                index_uid.clone(),
+                &[&split_id],
+                &[],
+                Some(index_delta),
+                None,
+            )
             .await
             .unwrap();
         index_uid
@@ -709,15 +691,17 @@ mod pulsar_broker_tests {
         source_config: SourceConfig,
         start_checkpoint: SourceCheckpoint,
     ) -> anyhow::Result<(ActorHandle<SourceActor>, Inbox<DocProcessor>)> {
-        let ctx = SourceExecutionContext::for_test(
-            metastore,
+        let runtime_args = SourceRuntimeArgs::for_test(
             index_uid,
-            PathBuf::from("./queues"),
             source_config,
+            metastore,
+            PathBuf::from("./queues"),
         );
 
         let source_loader = quickwit_supported_sources();
-        let source = source_loader.load_source(ctx, start_checkpoint).await?;
+        let source = source_loader
+            .load_source(runtime_args, start_checkpoint)
+            .await?;
 
         let (doc_processor_mailbox, doc_processor_inbox) = universe.create_test_mailbox();
         let source_actor = SourceActor {
@@ -832,15 +816,15 @@ mod pulsar_broker_tests {
             unreachable!()
         };
 
-        let ctx = SourceExecutionContext::for_test(
-            metastore,
+        let runtime_args = SourceRuntimeArgs::for_test(
             index_uid,
-            PathBuf::from("./queues"),
             source_config,
+            metastore,
+            PathBuf::from("./queues"),
         );
         let start_checkpoint = SourceCheckpoint::default();
 
-        let mut pulsar_source = PulsarSource::try_new(ctx, params, start_checkpoint)
+        let mut pulsar_source = PulsarSource::try_new(runtime_args, params, start_checkpoint)
             .await
             .expect("Setup pulsar source");
 

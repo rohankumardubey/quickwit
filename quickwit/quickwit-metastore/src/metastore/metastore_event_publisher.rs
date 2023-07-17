@@ -24,7 +24,10 @@ use async_trait::async_trait;
 use quickwit_common::pubsub::{Event, EventBroker};
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
-use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
+use quickwit_proto::metastore::{
+    CloseShardsRequest, CloseShardsResponse, CloseShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, ListShardsRequest, ListShardsResponse, OpenShardsRequest,
+};
 use quickwit_proto::IndexUid;
 use tracing::info;
 
@@ -141,16 +144,18 @@ impl Metastore for MetastoreEventPublisher {
     async fn publish_splits<'a>(
         &self,
         index_uid: IndexUid,
-        split_ids: &[&'a str],
+        staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        publish_token: Option<String>,
     ) -> MetastoreResult<()> {
         self.underlying
             .publish_splits(
                 index_uid,
-                split_ids,
+                staged_split_ids,
                 replaced_split_ids,
                 checkpoint_delta_opt,
+                publish_token,
             )
             .await
     }
@@ -271,6 +276,32 @@ impl Metastore for MetastoreEventPublisher {
         self.underlying
             .list_stale_splits(index_uid, delete_opstamp, num_splits)
             .await
+    }
+
+    // Shard API
+
+    async fn open_shards(
+        &self,
+        request: OpenShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse> {
+        self.underlying.open_shards(request).await
+    }
+    async fn close_shards(
+        &self,
+        request: CloseShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse> {
+        self.underlying.close_shards(request).await
+    }
+
+    async fn delete_shards(
+        &self,
+        request: DeleteShardsRequest,
+    ) -> MetastoreResult<DeleteShardsResponse> {
+        self.underlying.delete_shards(request).await
+    }
+
+    async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
+        self.underlying.list_shards(request).await
     }
 }
 

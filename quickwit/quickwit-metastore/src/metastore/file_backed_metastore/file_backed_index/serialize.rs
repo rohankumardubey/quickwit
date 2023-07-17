@@ -17,7 +17,10 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use itertools::Itertools;
+use quickwit_proto::ingest::Shard;
 use serde::{Deserialize, Serialize};
 
 use crate::file_backed_metastore::file_backed_index::FileBackedIndex;
@@ -54,23 +57,41 @@ pub(crate) struct FileBackedIndexV0_6 {
     metadata: IndexMetadata,
     splits: Vec<Split>,
     #[serde(default)]
+    shards: HashMap<String, Vec<Shard>>,
+    #[serde(default)]
     delete_tasks: Vec<DeleteTask>,
 }
 
 impl From<FileBackedIndex> for FileBackedIndexV0_6 {
     fn from(index: FileBackedIndex) -> Self {
+        let splits = index
+            .splits
+            .into_values()
+            .sorted_by_key(|split| split.update_timestamp)
+            .collect();
+        let shards = index
+            .shards
+            .into_iter()
+            .map(|(source_id, shards)| {
+                (
+                    source_id,
+                    shards
+                        .into_shards()
+                        .sorted_by_key(|shard| shard.shard_id)
+                        .collect(),
+                )
+            })
+            .collect();
+        let delete_tasks = index
+            .delete_tasks
+            .into_iter()
+            .sorted_by_key(|delete_task| delete_task.opstamp)
+            .collect();
         Self {
             metadata: index.metadata,
-            splits: index
-                .splits
-                .into_values()
-                .sorted_by_key(|split| split.update_timestamp)
-                .collect(),
-            delete_tasks: index
-                .delete_tasks
-                .into_iter()
-                .sorted_by_key(|delete_task| delete_task.opstamp)
-                .collect(),
+            splits,
+            shards,
+            delete_tasks,
         }
     }
 }
@@ -83,6 +104,11 @@ impl From<FileBackedIndexV0_6> for FileBackedIndex {
                 split.split_metadata.index_uid = index.metadata.index_uid.clone();
             }
         }
-        Self::new(index.metadata, index.splits, index.delete_tasks)
+        Self::new(
+            index.metadata,
+            index.splits,
+            index.shards,
+            index.delete_tasks,
+        )
     }
 }

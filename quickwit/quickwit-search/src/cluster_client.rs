@@ -21,11 +21,15 @@ use std::time::Duration;
 
 use base64::Engine;
 use futures::future::ready;
-use futures::{Future, StreamExt};
-use quickwit_proto::{
-    FetchDocsRequest, FetchDocsResponse, GetKvRequest, LeafListTermsRequest, LeafListTermsResponse,
+use futures::{Future, StreamExt, StreamExt, StreamExt};
+use quickwit_proto::search::{
+    FetchDocsRequest, FetchDocsResponse, LeafListTermsRequest, LeafListTermsResponse,
     LeafSearchRequest, LeafSearchResponse, LeafSearchStreamRequest, LeafSearchStreamResponse,
     PutKvRequest,
+};
+use quickwit_proto::{
+    FetchDocsRequest, FetchDocsResponse, FetchDocsResponse, GetKvRequest, LeafListTermsRequest,
+    LeafListTermsRequest, LeafListTermsResponse, LeafListTermsResponse,
 };
 use tantivy::aggregation::intermediate_agg_result::IntermediateAggregationResults;
 use tokio::sync::mpsc::error::SendError;
@@ -341,7 +345,7 @@ mod tests {
     use std::collections::HashSet;
     use std::net::SocketAddr;
 
-    use quickwit_proto::{
+    use quickwit_proto::search::{
         PartialHit, SearchRequest, SearchStreamRequest, SortValue, SplitIdAndFooterOffsets,
         SplitSearchError,
     };
@@ -446,8 +450,8 @@ mod tests {
         let request = mock_doc_request("split_1");
         let mut mock_search_service = MockSearchService::new();
         mock_search_service.expect_fetch_docs().return_once(
-            |_: quickwit_proto::FetchDocsRequest| {
-                Ok(quickwit_proto::FetchDocsResponse { hits: Vec::new() })
+            |_: quickwit_proto::search::FetchDocsRequest| {
+                Ok(quickwit_proto::search::FetchDocsResponse { hits: Vec::new() })
             },
         );
         let searcher_pool = searcher_pool_for_test([("127.0.0.1:1001", mock_search_service)]);
@@ -469,14 +473,14 @@ mod tests {
         let request = mock_doc_request("split_1");
         let mut mock_search_service_1 = MockSearchService::new();
         mock_search_service_1.expect_fetch_docs().return_once(
-            |_: quickwit_proto::FetchDocsRequest| {
+            |_: quickwit_proto::search::FetchDocsRequest| {
                 Err(SearchError::InternalError("error".to_string()))
             },
         );
         let mut mock_search_service_2 = MockSearchService::new();
         mock_search_service_2.expect_fetch_docs().return_once(
-            |_: quickwit_proto::FetchDocsRequest| {
-                Ok(quickwit_proto::FetchDocsResponse { hits: Vec::new() })
+            |_: quickwit_proto::search::FetchDocsRequest| {
+                Ok(quickwit_proto::search::FetchDocsResponse { hits: Vec::new() })
             },
         );
         let searcher_pool = searcher_pool_for_test([
@@ -498,11 +502,11 @@ mod tests {
     async fn test_cluster_client_fetch_docs_retry_with_final_error() {
         let request = mock_doc_request("split_1");
         let mut mock_search_service = MockSearchService::new();
-        mock_search_service
-            .expect_fetch_docs()
-            .returning(|_: quickwit_proto::FetchDocsRequest| {
+        mock_search_service.expect_fetch_docs().returning(
+            |_: quickwit_proto::search::FetchDocsRequest| {
                 Err(SearchError::InternalError("error".to_string()))
-            });
+            },
+        );
         let searcher_pool = searcher_pool_for_test([("127.0.0.1:1001", mock_search_service)]);
         let first_client_addr: SocketAddr = "127.0.0.1:1001".parse().unwrap();
         let first_client = searcher_pool.get(&first_client_addr).await.unwrap();

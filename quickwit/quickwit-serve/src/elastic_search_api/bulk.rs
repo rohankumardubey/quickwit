@@ -146,7 +146,7 @@ mod tests {
         let search_service = Arc::new(MockSearchService::new());
         let (universe, _temp_dir, ingest_service, _) =
             setup_ingest_service(&["my-index"], &IngestApiConfig::default()).await;
-        let elastic_api_handlers = elastic_api_handlers(config, search_service, ingest_service);
+        let elastic_api_handlers = elastic_api_handlers(config, ingest_service, search_service);
         let payload = r#"
             { "create" : { "_index" : "my-index", "_id" : "1"} }
             {"id": 1, "message": "push"}
@@ -168,7 +168,7 @@ mod tests {
         let search_service = Arc::new(MockSearchService::new());
         let (universe, _temp_dir, ingest_service, _) =
             setup_ingest_service(&["my-index-1", "my-index-2"], &IngestApiConfig::default()).await;
-        let elastic_api_handlers = elastic_api_handlers(config, search_service, ingest_service);
+        let elastic_api_handlers = elastic_api_handlers(config, ingest_service, search_service);
         let payload = r#"
             { "create" : { "_index" : "my-index-1", "_id" : "1"} }
             {"id": 1, "message": "push"}
@@ -194,7 +194,7 @@ mod tests {
         let search_service = Arc::new(MockSearchService::new());
         let (universe, _temp_dir, ingest_service, _) =
             setup_ingest_service(&["my-index-1", "my-index-2"], &IngestApiConfig::default()).await;
-        let elastic_api_handlers = elastic_api_handlers(config, search_service, ingest_service);
+        let elastic_api_handlers = elastic_api_handlers(config, ingest_service, search_service);
         let payload = r#"
             { "create" : { "_index" : "my-index-1", "_id" : "1"} }
             {"id": 1, "message": "push"}
@@ -220,7 +220,7 @@ mod tests {
         let search_service = Arc::new(MockSearchService::new());
         let (universe, _temp_dir, ingest_service, ingest_service_mailbox) =
             setup_ingest_service(&["my-index-1", "my-index-2"], &IngestApiConfig::default()).await;
-        let elastic_api_handlers = elastic_api_handlers(config, search_service, ingest_service);
+        let elastic_api_handlers = elastic_api_handlers(config, ingest_service, search_service);
         let payload = r#"
             { "create" : { "_index" : "my-index-1", "_id" : "1"} }
             {"id": 1, "message": "push"}
@@ -297,7 +297,7 @@ mod tests {
         let search_service = Arc::new(MockSearchService::new());
         let (universe, _temp_dir, ingest_service, ingest_service_mailbox) =
             setup_ingest_service(&["my-index-1", "my-index-2"], &IngestApiConfig::default()).await;
-        let elastic_api_handlers = elastic_api_handlers(config, search_service, ingest_service);
+        let elastic_api_handlers = elastic_api_handlers(config, ingest_service, search_service);
         let payload = r#"
             { "create" : { "_index" : "my-index-1", "_id" : "1"} }
             {"id": 1, "message": "push"}
@@ -372,7 +372,7 @@ mod tests {
         let config = Arc::new(NodeConfig::for_test());
         let search_service = Arc::new(MockSearchService::new());
         let ingest_service = IngestServiceClient::new(IngestServiceClient::mock());
-        let elastic_api_handlers = elastic_api_handlers(config, search_service, ingest_service);
+        let elastic_api_handlers = elastic_api_handlers(config, ingest_service, search_service);
         let payload = r#"
             {"create": {"_index": "my-index", "_id": "1"},}
             {"id": 1, "message": "my-doc"}"#;

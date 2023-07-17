@@ -41,7 +41,7 @@ mod split_metadata_version;
 
 use std::ops::Range;
 
-pub use error::{MetastoreError, MetastoreResolverError, MetastoreResult};
+pub use error::{EntityKind, MetastoreError, MetastoreResolverError, MetastoreResult};
 pub use metastore::file_backed_metastore::FileBackedMetastore;
 pub use metastore::grpc_metastore::{GrpcMetastoreAdapter, MetastoreGrpcClient};
 pub(crate) use metastore::index_metadata::serialize::{IndexMetadataV0_6, VersionedIndexMetadata};

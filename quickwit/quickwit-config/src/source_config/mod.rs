@@ -35,11 +35,17 @@ use serialize::VersionedSourceConfig;
 
 use crate::TestableForRegression;
 
-/// Reserved source ID for the `quickwit index ingest` CLI command.
-pub const CLI_INGEST_SOURCE_ID: &str = "_ingest-cli-source";
+/// Reserved source ID for the `quickwit tools local-ingest` CLI command.
+pub const CLI_INGEST_SOURCE_ID: &str = "_local-ingest-source";
 
 /// Reserved source ID used for Quickwit ingest API.
 pub const INGEST_API_SOURCE_ID: &str = "_ingest-api-source";
+
+/// Reserved source ID used for Quickwit's ingest source.
+pub const INGEST_SOURCE_ID: &str = "_ingest-source";
+
+pub const RESERVED_SOURCE_IDS: &[&str] =
+    &[CLI_INGEST_SOURCE_ID, INGEST_API_SOURCE_ID, INGEST_SOURCE_ID];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(into = "VersionedSourceConfig")]
@@ -89,6 +95,7 @@ impl SourceConfig {
             SourceParams::Kinesis(_) => "kinesis",
             SourceParams::Vec(_) => "vec",
             SourceParams::Void(_) => "void",
+            SourceParams::Ingest => "ingest",
             SourceParams::IngestApi => "ingest-api",
             SourceParams::IngestCli => "ingest-cli",
             SourceParams::Pulsar(_) => "pulsar",
@@ -103,8 +110,9 @@ impl SourceConfig {
             SourceParams::Kinesis(params) => serde_json::to_value(params),
             SourceParams::Vec(params) => serde_json::to_value(params),
             SourceParams::Void(params) => serde_json::to_value(params),
-            SourceParams::IngestApi => serde_json::to_value(()),
-            SourceParams::IngestCli => serde_json::to_value(()),
+            SourceParams::Ingest | SourceParams::IngestApi | SourceParams::IngestCli => {
+                Ok(JsonValue::Null)
+            }
             SourceParams::Pulsar(params) => serde_json::to_value(params),
         }
         .unwrap()
@@ -118,6 +126,19 @@ impl SourceConfig {
             desired_num_pipelines: NonZeroUsize::new(1).unwrap(),
             enabled: true,
             source_params: SourceParams::IngestApi,
+            transform_config: None,
+            input_format: SourceInputFormat::Json,
+        }
+    }
+
+    /// Creates an ingest source.
+    pub fn ingest_default() -> Self {
+        Self {
+            source_id: INGEST_SOURCE_ID.to_string(),
+            max_num_pipelines_per_indexer: NonZeroUsize::new(1).unwrap(),
+            desired_num_pipelines: NonZeroUsize::new(1).unwrap(),
+            enabled: true,
+            source_params: SourceParams::Ingest,
             transform_config: None,
             input_format: SourceInputFormat::Json,
         }
@@ -197,21 +218,17 @@ impl FromStr for SourceInputFormat {
     }
 }
 
+/// Static source parameters defined by users in the config file.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(tag = "source_type", content = "params")]
+#[serde(tag = "source_type", content = "params", rename_all = "lowercase")]
 pub enum SourceParams {
-    #[serde(rename = "file")]
     File(FileSourceParams),
-    #[serde(rename = "kafka")]
     Kafka(KafkaSourceParams),
-    #[serde(rename = "kinesis")]
     Kinesis(KinesisSourceParams),
-    #[serde(rename = "pulsar")]
     Pulsar(PulsarSourceParams),
-    #[serde(rename = "vec")]
     Vec(VecSourceParams),
-    #[serde(rename = "void")]
     Void(VoidSourceParams),
+    Ingest,
     #[serde(rename = "ingest-api")]
     IngestApi,
     #[serde(rename = "ingest-cli")]

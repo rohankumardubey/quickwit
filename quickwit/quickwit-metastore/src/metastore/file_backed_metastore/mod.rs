@@ -32,9 +32,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::future::try_join_all;
+use itertools::Either;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
-use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
+use quickwit_proto::metastore::{
+    CloseShardsRequest, CloseShardsResponse, CloseShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, ListShardsRequest, ListShardsResponse, OpenShardsRequest,
+};
 use quickwit_proto::IndexUid;
 use quickwit_storage::Storage;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
@@ -47,6 +51,7 @@ use self::store_operations::{
     index_exists, put_index, put_indexes_states,
 };
 use crate::checkpoint::IndexCheckpointDelta;
+use crate::error::EntityKind;
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, Split,
     SplitMetadata, SplitState,
@@ -163,9 +168,9 @@ impl FileBackedMetastore {
         let index_id = index_uid.index_id();
         let mut locked_index = self.get_locked_index(index_id).await?;
         if locked_index.index_uid() != index_uid {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_id.to_string(),
-            });
+            }));
         }
         let mut index = locked_index.clone();
         let value = match mutate_fn(&mut index)? {
@@ -212,9 +217,9 @@ impl FileBackedMetastore {
         if locked_index.index_uid() == index_uid {
             view(&locked_index)
         } else {
-            Err(MetastoreError::IndexDoesNotExist {
+            Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_id.to_string(),
-            })
+            }))
         }
     }
 
@@ -321,9 +326,9 @@ impl Metastore for FileBackedMetastore {
         //   don't want to override an existing metadata file.
         if let Some(index_state) = per_index_metastores_wlock.get(&index_id) {
             if let IndexState::Alive(_) = index_state {
-                return Err(MetastoreError::IndexAlreadyExists {
-                    index_id: index_id.clone(),
-                });
+                return Err(MetastoreError::AlreadyExists(EntityKind::Index {
+                    index_id,
+                }));
             }
         } else if index_exists(&*self.storage, &index_id).await? {
             return Err(MetastoreError::InternalError {
@@ -377,9 +382,9 @@ impl Metastore for FileBackedMetastore {
         if !per_index_metastores_wlock.contains_key(index_id)
             && !index_exists(&*self.storage, index_id).await?
         {
-            return Err(MetastoreError::IndexDoesNotExist {
+            return Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_id.to_string(),
-            });
+            }));
         }
 
         // Set state to `Deleting` and keep the previous state in memory in case we need to insert
@@ -402,7 +407,7 @@ impl Metastore for FileBackedMetastore {
             Ok(()) |
             // If the index file does not exist, we still need to return an error,
             // but it makes sense to ensure that the index state is removed.
-            Err(MetastoreError::IndexDoesNotExist { .. }) => {
+            Err(MetastoreError::NotFound { .. }) => {
                 per_index_metastores_wlock.remove(index_id);
                 if let Err(error) = put_indexes_states(&*self.storage, &per_index_metastores_wlock).await {
                     per_index_metastores_wlock.insert(index_id.to_string(), IndexState::Deleting);
@@ -449,12 +454,18 @@ impl Metastore for FileBackedMetastore {
     async fn publish_splits<'a>(
         &self,
         index_uid: IndexUid,
-        split_ids: &[&'a str],
+        staged_split_ids: &[&'a str],
         replaced_split_ids: &[&'a str],
         checkpoint_delta_opt: Option<IndexCheckpointDelta>,
+        publish_token: Option<String>,
     ) -> MetastoreResult<()> {
         self.mutate(index_uid, |index| {
-            index.publish_splits(split_ids, replaced_split_ids, checkpoint_delta_opt)?;
+            index.publish_splits(
+                staged_split_ids,
+                replaced_split_ids,
+                checkpoint_delta_opt,
+                publish_token,
+            )?;
             Ok(MutationOccurred::Yes(()))
         })
         .await?;
@@ -577,7 +588,7 @@ impl Metastore for FileBackedMetastore {
             try_join_all(index_ids.iter().map(|index_id| async move {
                 match self.index_metadata(index_id).await {
                     Ok(index_metadata) => Ok(Some(index_metadata)),
-                    Err(MetastoreError::IndexDoesNotExist { index_id: _ }) => Ok(None),
+                    Err(MetastoreError::NotFound(EntityKind::Index { .. })) => Ok(None),
                     Err(MetastoreError::InternalError { message, cause }) => {
                         // Indexes can be in a transition state `Creating` or `Deleting`.
                         // This is fine to ignore them.
@@ -604,6 +615,28 @@ impl Metastore for FileBackedMetastore {
     async fn check_connectivity(&self) -> anyhow::Result<()> {
         check_indexes_states_exist(self.storage.clone()).await
     }
+
+    /// -------------------------------------------------------------------------------
+    /// Shard API
+
+    // async fn create_shard(&self, index_uid: IndexUid, shard_id: ShardId) -> MetastoreResult<()> {
+    //     self.mutate(index_uid, |index| {
+    //         index.create_shard(shard_id)?;
+    //         Ok(MutationOccurred::Yes(()))
+    //     })
+    //     .await?;
+    //     Ok(())
+    // }
+
+    // async fn list_shards(
+    //     &self,
+    //     index_id: &str,
+    //     source_id: &str,
+    //     shard_state_opt: Option<ShardState>,
+    // ) -> MetastoreResult<ListShardsResponse> { let list_shards_response = self .read(index_id,
+    //   |index| { index.list_shards(source_id, shard_state_opt) }) .await?;
+    //   Ok(list_shards_response)
+    // }
 
     /// -------------------------------------------------------------------------------
     /// Delete tasks
@@ -646,13 +679,106 @@ impl Metastore for FileBackedMetastore {
         opstamp_start: u64,
     ) -> MetastoreResult<Vec<DeleteTask>> {
         let delete_tasks = self
-            .read(
-                index_uid,
-                |index| Ok(index.list_delete_tasks(opstamp_start)),
-            )
-            .await??;
+            .read(index_uid, |index| index.list_delete_tasks(opstamp_start))
+            .await?;
         Ok(delete_tasks)
     }
+
+    // Shard API
+
+    async fn open_shards(
+        &self,
+        request: OpenShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse> {
+        let mut subresponses = Vec::with_capacity(request.subrequests.len());
+
+        for subrequest in request.subrequests {
+            let index_uid: IndexUid = subrequest.index_uid.clone().into();
+            let subresponse = self
+                .mutate(index_uid, |index| index.open_shards(subrequest))
+                .await?;
+            subresponses.push(subresponse);
+        }
+        let response = CloseShardsResponse { subresponses };
+        Ok(response)
+    }
+
+    async fn close_shards(
+        &self,
+        request: CloseShardsRequest,
+    ) -> MetastoreResult<CloseShardsResponse> {
+        let mut successes = Vec::with_capacity(request.subrequests.len());
+        let mut failures = Vec::new();
+
+        for subrequest in request.subrequests {
+            let index_uid: IndexUid = subrequest.index_uid.clone().into();
+            match self
+                .mutate(index_uid, |index| index.close_shards(subrequest))
+                .await
+            {
+                Ok(Either::Left(success)) => {
+                    successes.push(success);
+                }
+                Ok(Either::Right(failure)) => {
+                    failures.push(failure);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let response = CloseShardsResponse {
+            successes,
+            failures,
+        };
+        Ok(response)
+    }
+
+    async fn delete_shards(
+        &self,
+        request: DeleteShardsRequest,
+    ) -> MetastoreResult<DeleteShardsResponse> {
+        let mut subresponses = Vec::with_capacity(request.subrequests.len());
+
+        for subrequest in request.subrequests {
+            let index_uid: IndexUid = subrequest.index_uid.clone().into();
+            let subresponse = self
+                .mutate(index_uid, |index| {
+                    index.delete_shards(subrequest, request.force)
+                })
+                .await?;
+            subresponses.push(subresponse);
+        }
+        let response = DeleteShardsResponse {};
+        Ok(response)
+    }
+
+    async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
+        let mut subresponses = Vec::with_capacity(request.subrequests.len());
+
+        for subrequest in request.subrequests {
+            let index_uid: IndexUid = subrequest.index_uid.clone().into();
+            let subresponse = self
+                .mutate(index_uid, |index| index.list_shards(subrequest))
+                .await?;
+            subresponses.push(subresponse);
+        }
+        let response = ListShardsResponse { subresponses };
+        Ok(response)
+    }
+
+    // async fn list_shards(&self, request: ListShardsRequest) ->
+    // MetastoreResult<ListShardsResponse> {     let mut subresponses =
+    // Vec::with_capacity(request.subrequests.len());
+
+    //     for subrequest in request.subrequests {
+    //         let index_uid: IndexUid = subrequest.index_uid.clone().into();
+    //         let subresponse = self
+    //             .read(index_uid, |index| index.list_shards(subrequest))
+    //             .await?;
+    //         subresponses.push(subresponse);
+    //     }
+    //     let response = ListShardsResponse { subresponses };
+    //     Ok(response)
+    // }
 }
 
 async fn get_index_mutex(
@@ -776,20 +902,14 @@ mod tests {
             .get_index(IndexUid::new("index-does-not-exist"))
             .await
             .unwrap_err();
-        assert!(matches!(
-            metastore_error,
-            MetastoreError::IndexDoesNotExist { .. }
-        ));
+        assert!(matches!(metastore_error, MetastoreError::NotFound { .. }));
 
         // Open a index with a different incarnation_id.
         let metastore_error = metastore
             .get_index(IndexUid::new(index_id))
             .await
             .unwrap_err();
-        assert!(matches!(
-            metastore_error,
-            MetastoreError::IndexDoesNotExist { .. }
-        ));
+        assert!(matches!(metastore_error, MetastoreError::NotFound { .. }));
     }
 
     #[tokio::test]
@@ -849,7 +969,7 @@ mod tests {
 
         // publish split fails
         let err = metastore
-            .publish_splits(index_uid.clone(), &[split_id], &[], None)
+            .publish_splits(index_uid.clone(), &[split_id], &[], None, None)
             .await;
         assert!(err.is_err());
 
@@ -1029,7 +1149,7 @@ mod tests {
                     // publish split
                     let split_id = format!("split-{i}");
                     metastore
-                        .publish_splits(index_uid.clone(), &[&split_id], &[], None)
+                        .publish_splits(index_uid.clone(), &[&split_id], &[], None, None)
                         .await
                         .unwrap();
                 }
@@ -1120,7 +1240,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             created_index_error,
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound { .. }
         ));
     }
 
@@ -1182,7 +1302,7 @@ mod tests {
         let deleted_index_error = metastore.delete_index(index_uid.clone()).await.unwrap_err();
         assert!(matches!(
             deleted_index_error,
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound { .. }
         ));
         let index_states = fetch_or_init_indexes_states(Arc::new(ram_storage_clone_2), None)
             .await
@@ -1192,7 +1312,7 @@ mod tests {
         let created_index_error = metastore.get_index(index_uid).await.unwrap_err();
         assert!(matches!(
             created_index_error,
-            MetastoreError::IndexDoesNotExist { .. }
+            MetastoreError::NotFound { .. }
         ));
     }
 

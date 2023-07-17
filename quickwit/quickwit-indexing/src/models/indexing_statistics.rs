@@ -31,16 +31,16 @@ pub struct IndexingStatistics {
     /// Number of document parse error, or missing timestamps
     pub num_invalid_docs: u64,
     /// Number of created split
-    pub num_local_splits: u64,
+    pub num_created_splits: u64,
     /// Number of staged splits
     pub num_staged_splits: u64,
     /// Number of uploaded splits
     pub num_uploaded_splits: u64,
     /// Number of published splits
     pub num_published_splits: u64,
-    /// Number of empty batches
-    pub num_empty_splits: u64,
-    /// Size in byte of document processed
+    /// Number of times an empty publish operation was performed
+    pub num_empty_publish_ops: u64,
+    /// Size in bytes of document processed
     pub total_bytes_processed: u64,
     /// Size in bytes of resulting split
     pub total_size_splits: u64,
@@ -60,12 +60,14 @@ impl IndexingStatistics {
     ) -> Self {
         self.num_docs += doc_processor_counters.num_processed_docs();
         self.num_invalid_docs += doc_processor_counters.num_invalid_docs();
-        self.num_local_splits += indexer_counters.num_splits_emitted;
+        self.num_created_splits += indexer_counters.num_splits_emitted;
         self.total_bytes_processed += doc_processor_counters.overall_num_bytes;
-        self.num_staged_splits += uploader_counters.num_staged_splits.load(Ordering::SeqCst);
-        self.num_uploaded_splits += uploader_counters.num_uploaded_splits.load(Ordering::SeqCst);
+        self.num_staged_splits += uploader_counters.num_staged_splits.load(Ordering::Relaxed);
+        self.num_uploaded_splits += uploader_counters
+            .num_uploaded_splits
+            .load(Ordering::Relaxed);
         self.num_published_splits += publisher_counters.num_published_splits;
-        self.num_empty_splits += publisher_counters.num_empty_splits;
+        self.num_empty_publish_ops += publisher_counters.num_empty_publish_ops;
         self
     }
 

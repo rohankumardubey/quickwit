@@ -328,7 +328,7 @@ mod tests {
     use itertools::Itertools;
     use quickwit_config::IndexConfig;
     use quickwit_metastore::{
-        metastore_for_test, ListSplitsQuery, MockMetastore, SplitMetadata, SplitState,
+        metastore_for_test, EntityKind, ListSplitsQuery, MockMetastore, SplitMetadata, SplitState,
     };
     use quickwit_proto::IndexUid;
     use quickwit_storage::{
@@ -652,9 +652,9 @@ mod tests {
 
         let mut mock_metastore = MockMetastore::new();
         mock_metastore.expect_delete_splits().return_once(|_, _| {
-            Err(MetastoreError::IndexDoesNotExist {
+            Err(MetastoreError::NotFound(EntityKind::Index {
                 index_id: index_id.to_string(),
-            })
+            }))
         });
         let metastore = Arc::new(mock_metastore);
 

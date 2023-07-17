@@ -31,6 +31,7 @@ use quickwit_config::SourceConfig;
 use quickwit_metastore::Metastore;
 use quickwit_proto::control_plane::{NotifyIndexChangeRequest, NotifyIndexChangeResponse};
 use quickwit_proto::indexing::{ApplyIndexingPlanRequest, IndexingService, IndexingTask};
+use quickwit_proto::types::NodeId;
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
@@ -107,9 +108,9 @@ pub struct IndexingSchedulerState {
 /// plan with the running plan.
 pub struct IndexingScheduler {
     cluster_id: String,
-    self_node_id: String,
+    self_node_id: NodeId,
     metastore: Arc<dyn Metastore>,
-    indexing_client_pool: IndexerPool,
+    indexer_pool: IndexerPool,
     state: IndexingSchedulerState,
 }
 
@@ -127,38 +128,18 @@ impl fmt::Debug for IndexingScheduler {
     }
 }
 
-#[async_trait]
-impl Actor for IndexingScheduler {
-    type ObservableState = IndexingSchedulerState;
-
-    fn observable_state(&self) -> Self::ObservableState {
-        self.state.clone()
-    }
-
-    fn name(&self) -> String {
-        "IndexingScheduler".to_string()
-    }
-
-    async fn initialize(&mut self, ctx: &ActorContext<Self>) -> Result<(), ActorExitStatus> {
-        self.handle(RefreshPlanLoop, ctx).await?;
-        ctx.schedule_self_msg(CONTROL_PLAN_LOOP_INTERVAL, ControlPlanLoop)
-            .await;
-        Ok(())
-    }
-}
-
 impl IndexingScheduler {
     pub fn new(
         cluster_id: String,
-        self_node_id: String,
+        self_node_id: NodeId,
         metastore: Arc<dyn Metastore>,
-        indexing_client_pool: IndexerPool,
+        indexer_pool: IndexerPool,
     ) -> Self {
         Self {
             cluster_id,
             self_node_id,
             metastore,
-            indexing_client_pool,
+            indexer_pool,
             state: IndexingSchedulerState::default(),
         }
     }
@@ -235,7 +216,6 @@ impl IndexingScheduler {
                 return Ok(());
             }
         }
-
         let mut indexers = self.get_indexers_from_indexer_pool().await;
         let running_indexing_tasks_by_node_id: HashMap<String, Vec<IndexingTask>> = indexers
             .iter()
@@ -259,7 +239,7 @@ impl IndexingScheduler {
     }
 
     async fn get_indexers_from_indexer_pool(&self) -> Vec<(String, IndexerNodeInfo)> {
-        self.indexing_client_pool.all().await
+        self.indexer_pool.all().await
     }
 
     async fn apply_physical_indexing_plan(
@@ -297,19 +277,22 @@ impl IndexingScheduler {
 }
 
 #[async_trait]
-impl Handler<NotifyIndexChangeRequest> for IndexingScheduler {
-    type Reply = quickwit_proto::control_plane::Result<NotifyIndexChangeResponse>;
+impl Actor for IndexingScheduler {
+    type ObservableState = IndexingSchedulerState;
 
-    async fn handle(
-        &mut self,
-        _: NotifyIndexChangeRequest,
-        _: &ActorContext<Self>,
-    ) -> Result<Self::Reply, ActorExitStatus> {
-        debug!("Index change notification: schedule indexing plan.");
-        self.schedule_indexing_plan_if_needed()
-            .await
-            .context("Error when scheduling indexing plan")?;
-        Ok(Ok(NotifyIndexChangeResponse {}))
+    fn observable_state(&self) -> Self::ObservableState {
+        self.state.clone()
+    }
+
+    fn name(&self) -> String {
+        "IndexingScheduler".to_string()
+    }
+
+    async fn initialize(&mut self, ctx: &ActorContext<Self>) -> Result<(), ActorExitStatus> {
+        self.handle(RefreshPlanLoop, ctx).await?;
+        ctx.schedule_self_msg(CONTROL_PLAN_LOOP_INTERVAL, ControlPlanLoop)
+            .await;
+        Ok(())
     }
 }
 
@@ -331,6 +314,23 @@ impl Handler<ControlPlanLoop> for IndexingScheduler {
         ctx.schedule_self_msg(CONTROL_PLAN_LOOP_INTERVAL, ControlPlanLoop)
             .await;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Handler<NotifyIndexChangeRequest> for IndexingScheduler {
+    type Reply = crate::Result<NotifyIndexChangeResponse>;
+
+    async fn handle(
+        &mut self,
+        _: NotifyIndexChangeRequest,
+        _: &ActorContext<Self>,
+    ) -> Result<Self::Reply, ActorExitStatus> {
+        debug!("Index change notification: schedule indexing plan.");
+        self.schedule_indexing_plan_if_needed()
+            .await
+            .context("Error when scheduling indexing plan")?;
+        Ok(Ok(NotifyIndexChangeResponse {}))
     }
 }
 
@@ -571,11 +571,15 @@ mod tests {
     }
 
     pub fn test_indexer_change_stream(
+        universe: &Universe,
         cluster_change_stream: impl Stream<Item = ClusterChange> + Send + 'static,
-        indexing_clients: HashMap<String, Mailbox<IndexingService>>,
+        indexing_clients: HashMap<String, Mailbox<IndexingPipelineManager>>,
     ) -> impl Stream<Item = Change<String, IndexerNodeInfo>> + Send + 'static {
+        let (indexing_controller_agent_mailbox, _indexing_controller_agent_inbox) =
+            universe.create_test_mailbox::<IndexingControllerAgent>();
         cluster_change_stream.filter_map(move |cluster_change| {
             let indexing_clients = indexing_clients.clone();
+            let indexing_controller_agent_mailbox = indexing_controller_agent_mailbox.clone();
             Box::pin(async move {
                 match cluster_change {
                     ClusterChange::Add(node)
@@ -601,10 +605,13 @@ mod tests {
     }
 
     async fn start_scheduler(
+        universe: &Universe,
         cluster: Cluster,
         indexers: &[&Cluster],
-        universe: &Universe,
-    ) -> (Vec<Inbox<IndexingService>>, ActorHandle<IndexingScheduler>) {
+    ) -> (
+        Vec<Inbox<IndexingPipelineManager>>,
+        ActorHandle<IndexingScheduler>,
+    ) {
         let index_1 = "test-indexing-plan-1";
         let source_1 = "source-1";
         let index_2 = "test-indexing-plan-2";
@@ -617,7 +624,7 @@ mod tests {
             .expect_list_indexes_metadatas()
             .returning(move || Ok(vec![index_metadata_2.clone(), index_metadata_1.clone()]));
         let mut indexer_inboxes = Vec::new();
-        let indexing_client_pool = Pool::default();
+        let indexer_pool = Pool::default();
         let change_stream = cluster.ready_nodes_change_stream().await;
         let mut indexing_clients = HashMap::new();
         for indexer in indexers {
@@ -625,14 +632,15 @@ mod tests {
             indexing_clients.insert(indexer.self_node_id().to_string(), indexing_service_mailbox);
             indexer_inboxes.push(indexing_service_inbox);
         }
-        let indexer_change_stream = test_indexer_change_stream(change_stream, indexing_clients);
-        indexing_client_pool.listen_for_changes(indexer_change_stream);
+        let indexer_change_stream =
+            test_indexer_change_stream(universe, change_stream, indexing_clients);
+        indexer_pool.listen_for_changes(indexer_change_stream);
 
         let indexing_scheduler = IndexingScheduler::new(
             cluster.cluster_id().to_string(),
-            cluster.self_node_id().to_string(),
+            cluster.self_node_id().into(),
             Arc::new(metastore),
-            indexing_client_pool,
+            indexer_pool,
         );
         let (_, scheduler_handler) = universe.spawn_builder().spawn(indexing_scheduler);
         (indexer_inboxes, scheduler_handler)
@@ -652,7 +660,7 @@ mod tests {
             .unwrap();
         let universe = Universe::with_accelerated_time();
         let (indexing_service_inboxes, scheduler_handler) =
-            start_scheduler(cluster.clone(), &[&cluster.clone()], &universe).await;
+            start_scheduler(&universe, cluster.clone(), &[&cluster.clone()]).await;
         let indexing_service_inbox = indexing_service_inboxes[0].clone();
         let scheduler_state = scheduler_handler.process_pending_and_observe().await;
         let indexing_service_inbox_messages =
@@ -722,7 +730,7 @@ mod tests {
             .unwrap();
         let universe = Universe::with_accelerated_time();
         let (indexing_service_inboxes, scheduler_handler) =
-            start_scheduler(cluster.clone(), &[], &universe).await;
+            start_scheduler(&universe, cluster.clone(), &[]).await;
         assert_eq!(indexing_service_inboxes.len(), 0);
 
         // No indexer.
@@ -767,9 +775,9 @@ mod tests {
         .unwrap();
         let universe = Universe::new();
         let (indexing_service_inboxes, scheduler_handler) = start_scheduler(
+            &universe,
             cluster.clone(),
             &[&cluster_indexer_1, &cluster_indexer_2],
-            &universe,
         )
         .await;
         let indexing_service_inbox_1 = indexing_service_inboxes[0].clone();
@@ -888,10 +896,12 @@ mod tests {
             let task_1 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-1".to_string(),
+                shard_ids: Vec::new(),
             };
             let task_2 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-2".to_string(),
+                shard_ids: Vec::new(),
             };
             running_plan.insert(
                 "indexer-1".to_string(),
@@ -910,10 +920,12 @@ mod tests {
             let task_1 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-1".to_string(),
+                shard_ids: Vec::new(),
             };
             let task_2 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-2".to_string(),
+                shard_ids: Vec::new(),
             };
             running_plan.insert("indexer-1".to_string(), vec![task_1.clone()]);
             desired_plan.insert("indexer-1".to_string(), vec![task_2.clone()]);
@@ -938,10 +950,12 @@ mod tests {
             let task_1 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-1".to_string(),
+                shard_ids: Vec::new(),
             };
             let task_2 = IndexingTask {
                 index_uid: "index-2:11111111111111111111111111".to_string(),
                 source_id: "source-2".to_string(),
+                shard_ids: Vec::new(),
             };
             running_plan.insert("indexer-2".to_string(), vec![task_2.clone()]);
             desired_plan.insert("indexer-1".to_string(), vec![task_1.clone()]);
@@ -974,6 +988,7 @@ mod tests {
             let task_1 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-1".to_string(),
+                shard_ids: Vec::new(),
             };
             running_plan.insert("indexer-1".to_string(), vec![task_1.clone()]);
             desired_plan.insert(
@@ -997,6 +1012,7 @@ mod tests {
             let task_1 = IndexingTask {
                 index_uid: "index-1:11111111111111111111111111".to_string(),
                 source_id: "source-1".to_string(),
+                shard_ids: Vec::new(),
             };
             running_plan.insert(
                 "indexer-1".to_string(),

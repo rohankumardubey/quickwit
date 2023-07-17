@@ -142,6 +142,21 @@
     ],
     "version": "0.6"
   },
+  "shards": {
+    "native-ingest": [
+      {
+        "follower_id": "follower",
+        "index_uid": "test:11111111111111111111111111",
+        "leader_id": "leader",
+        "publish_position_inclusive": "",
+        "publish_token": null,
+        "replication_position_inclusive": null,
+        "shard_id": 0,
+        "shard_state": 0,
+        "source_id": "native-ingest"
+      }
+    ]
+  },
   "splits": [
     {
       "create_timestamp": 3,

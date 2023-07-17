@@ -24,7 +24,7 @@ use std::sync::Arc;
 use quickwit_actors::{Mailbox, Universe};
 use quickwit_cluster::Cluster;
 use quickwit_config::NodeConfig;
-use quickwit_ingest::IngestApiService;
+use quickwit_ingest::{IngestApiService, IngesterPool};
 use quickwit_metastore::Metastore;
 use quickwit_storage::StorageResolver;
 use tracing::info;
@@ -69,12 +69,13 @@ pub async fn start_indexing_service(
     cluster: Cluster,
     metastore: Arc<dyn Metastore>,
     ingest_api_service: Mailbox<IngestApiService>,
+    ingester_pool: IngesterPool,
     storage_resolver: StorageResolver,
-) -> anyhow::Result<Mailbox<IndexingService>> {
+) -> anyhow::Result<Mailbox<IndexingPipelineManager>> {
     info!("Starting indexer service.");
 
     // Spawn indexing service.
-    let indexing_service = IndexingService::new(
+    let indexing_service = IndexingPipelineManager::new(
         config.node_id.clone(),
         config.data_dir_path.to_path_buf(),
         config.indexer_config.clone(),
@@ -82,6 +83,7 @@ pub async fn start_indexing_service(
         cluster,
         metastore.clone(),
         Some(ingest_api_service),
+        ingester_pool,
         storage_resolver,
     )
     .await?;

@@ -17,11 +17,17 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-use bytes::{Buf, Bytes};
+use std::sync::Arc;
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use quickwit_config::INGEST_SOURCE_ID;
 use quickwit_ingest::{
-    CommitType, DocBatchBuilder, FetchResponse, IngestRequest, IngestResponse, IngestService,
-    IngestServiceClient, IngestServiceError, TailRequest,
+    CommitType, DocBatchBuilder, FetchResponse, IngestErrorV2, IngestRequest, IngestRequestV2,
+    IngestResponse, IngestResponseV2, IngestRouterService, IngestRouterServiceClient,
+    IngestService, IngestServiceClient, IngestServiceError, IngestSubrequest, TailRequest,
 };
+use quickwit_metastore::Metastore;
+use quickwit_proto::ingest::DocBatchV2;
 use serde::Deserialize;
 use thiserror::Error;
 use warp::{Filter, Rejection};
@@ -44,14 +50,14 @@ pub struct IngestApi;
 pub struct IngestApiSchemas;
 
 #[derive(Debug, Error)]
-#[error("Body is not utf-8.")]
+#[error("Request body contains invalid UTF-8 characters.")]
 struct InvalidUtf8;
 
 impl warp::reject::Reject for InvalidUtf8 {}
 
 const CONTENT_LENGTH_LIMIT: u64 = 10 * 1024 * 1024; // 10MiB
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
 struct IngestOptions {
     #[serde(alias = "commit")]
     #[serde(default)]
@@ -59,9 +65,13 @@ struct IngestOptions {
 }
 
 pub(crate) fn ingest_api_handlers(
+    metastore: Arc<dyn Metastore>,
     ingest_service: IngestServiceClient,
+    ingest_router: IngestRouterServiceClient,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
-    ingest_handler(ingest_service.clone()).or(tail_handler(ingest_service))
+    ingest_handler(ingest_service.clone())
+        .or(tail_handler(ingest_service))
+        .or(ingest_v2_handler(metastore.clone(), ingest_router))
 }
 
 fn ingest_filter(
@@ -157,8 +167,70 @@ pub(crate) fn lines(body: &Bytes) -> impl Iterator<Item = &[u8]> {
         .filter(|line| !line.is_empty())
 }
 
+fn ingest_v2_filter(
+) -> impl Filter<Extract = (String, Bytes, IngestOptions), Error = Rejection> + Clone {
+    warp::path!(String / "ingest-v2")
+        .and(warp::post())
+        .and(warp::body::content_length_limit(CONTENT_LENGTH_LIMIT))
+        .and(warp::body::bytes())
+        .and(serde_qs::warp::query::<IngestOptions>(
+            serde_qs::Config::default(),
+        ))
+}
+
+fn ingest_v2_handler(
+    metastore: Arc<dyn Metastore>,
+    ingest_router: IngestRouterServiceClient,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
+    ingest_v2_filter()
+        .and(with_arg(metastore))
+        .and(with_arg(ingest_router))
+        .then(ingest_v2)
+        .and(with_arg(BodyFormat::default()))
+        .map(make_json_api_response)
+}
+
+async fn ingest_v2(
+    index_id: String,
+    body: Bytes,
+    ingest_options: IngestOptions,
+    metastore: Arc<dyn Metastore>,
+    mut ingest_router: IngestRouterServiceClient,
+) -> Result<IngestResponseV2, IngestErrorV2> {
+    let mut doc_buffer = BytesMut::new();
+    let mut doc_lengths = Vec::new();
+
+    for line in lines(&body) {
+        doc_lengths.push(line.len() as u32);
+        doc_buffer.put(line);
+    }
+    let doc_batch = DocBatchV2 {
+        doc_buffer: doc_buffer.freeze(),
+        doc_lengths,
+    };
+    // FIXME: that's no bueno for a high QPS service.
+    let index_uid: String = metastore
+        .index_uid(&index_id)
+        .await
+        .map_err(|error| IngestErrorV2::Internal(error.to_string()))? // FIXME: fix conversion from metastore error to ingest error.
+        .into();
+
+    let subrequest = IngestSubrequest {
+        index_uid,
+        source_id: INGEST_SOURCE_ID.to_string(),
+        doc_batch: Some(doc_batch),
+    };
+    let request = IngestRequestV2 {
+        commit_type: ingest_options.commit_type as u32,
+        subrequests: vec![subrequest],
+    };
+    let response = ingest_router.ingest(request).await?;
+    Ok(response)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
     use byte_unit::Byte;
@@ -166,9 +238,10 @@ pub(crate) mod tests {
     use quickwit_config::IngestApiConfig;
     use quickwit_ingest::{
         init_ingest_api, CreateQueueIfNotExistsRequest, FetchRequest, FetchResponse,
-        IngestApiService, IngestResponse, IngestServiceClient, SuggestTruncateRequest,
-        QUEUES_DIR_NAME,
+        IngestApiService, IngestResponse, IngestRouterServiceClient, IngestServiceClient,
+        SuggestTruncateRequest, QUEUES_DIR_NAME,
     };
+    use quickwit_metastore::MockMetastore;
 
     use super::ingest_api_handlers;
 
@@ -202,9 +275,12 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_ingest_api_returns_200_when_ingest_json_and_fetch() {
+        let metastore = Arc::new(MockMetastore::default());
         let (universe, _temp_dir, ingest_service, _) =
             setup_ingest_service(&["my-index"], &IngestApiConfig::default()).await;
-        let ingest_api_handlers = ingest_api_handlers(ingest_service);
+        let ingest_router = IngestRouterServiceClient::mock().into();
+
+        let ingest_api_handlers = ingest_api_handlers(metastore, ingest_service, ingest_router);
         let resp = warp::test::request()
             .path("/my-index/ingest")
             .method("POST")
@@ -236,9 +312,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_ingest_api_returns_200_when_ingest_ndjson_and_fetch() {
+        let metastore = Arc::new(MockMetastore::default());
         let (universe, _temp_dir, ingest_service, _) =
             setup_ingest_service(&["my-index"], &IngestApiConfig::default()).await;
-        let ingest_api_handlers = ingest_api_handlers(ingest_service);
+        let ingest_router = IngestRouterServiceClient::mock().into();
+        let ingest_api_handlers = ingest_api_handlers(metastore, ingest_service, ingest_router);
         let payload = r#"
             {"id": 1, "message": "push"}
             {"id": 2, "message": "push"}
@@ -258,13 +336,15 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_ingest_api_return_429_if_above_limits() {
+        let metastore = Arc::new(MockMetastore::default());
         let config = IngestApiConfig {
             max_queue_memory_usage: Byte::from_bytes(1),
             ..Default::default()
         };
         let (universe, _temp_dir, ingest_service, _) =
             setup_ingest_service(&["my-index"], &config).await;
-        let ingest_api_handlers = ingest_api_handlers(ingest_service);
+        let ingest_router = IngestRouterServiceClient::mock().into();
+        let ingest_api_handlers = ingest_api_handlers(metastore, ingest_service, ingest_router);
         let resp = warp::test::request()
             .path("/my-index/ingest")
             .method("POST")
@@ -278,9 +358,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_ingest_api_blocks_when_wait_is_specified() {
-        let (universe, _temp_dir, ingest_service_client, ingest_service_mailbox) =
+        let metastore = Arc::new(MockMetastore::default());
+        let (universe, _temp_dir, ingest_service, ingest_service_mailbox) =
             setup_ingest_service(&["my-index"], &IngestApiConfig::default()).await;
-        let ingest_api_handlers = ingest_api_handlers(ingest_service_client);
+        let ingest_router = IngestRouterServiceClient::mock().into();
+        let ingest_api_handlers = ingest_api_handlers(metastore, ingest_service, ingest_router);
         let handle = tokio::spawn(async move {
             let resp = warp::test::request()
                 .path("/my-index/ingest?commit=wait_for")
@@ -322,9 +404,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_ingest_api_blocks_when_force_is_specified() {
-        let (universe, _temp_dir, ingest_service_client, ingest_service_mailbox) =
+        let metastore = Arc::new(MockMetastore::default());
+        let (universe, _temp_dir, ingest_service, ingest_service_mailbox) =
             setup_ingest_service(&["my-index"], &IngestApiConfig::default()).await;
-        let ingest_api_handlers = ingest_api_handlers(ingest_service_client);
+        let ingest_router = IngestRouterServiceClient::mock().into();
+        let ingest_api_handlers = ingest_api_handlers(metastore, ingest_service, ingest_router);
         let handle = tokio::spawn(async move {
             let resp = warp::test::request()
                 .path("/my-index/ingest?commit=force")

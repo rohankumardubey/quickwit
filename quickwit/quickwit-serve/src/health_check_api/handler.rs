@@ -19,7 +19,7 @@
 
 use quickwit_actors::{Healthz, Mailbox};
 use quickwit_cluster::Cluster;
-use quickwit_indexing::IndexingService;
+use quickwit_indexing::IndexingPipelineManager;
 use quickwit_janitor::JanitorService;
 use tracing::error;
 use warp::hyper::StatusCode;
@@ -35,14 +35,14 @@ pub struct HealthCheckApi;
 /// Health check handlers.
 pub(crate) fn health_check_handlers(
     cluster: Cluster,
-    indexer_service_opt: Option<Mailbox<IndexingService>>,
+    indexer_service_opt: Option<Mailbox<IndexingPipelineManager>>,
     janitor_service_opt: Option<Mailbox<JanitorService>>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     liveness_handler(indexer_service_opt, janitor_service_opt).or(readiness_handler(cluster))
 }
 
 fn liveness_handler(
-    indexer_service_opt: Option<Mailbox<IndexingService>>,
+    indexer_service_opt: Option<Mailbox<IndexingPipelineManager>>,
     janitor_service_opt: Option<Mailbox<JanitorService>>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     warp::path!("health" / "livez")
@@ -72,7 +72,7 @@ fn readiness_handler(
 )]
 /// Get Node Liveliness
 async fn get_liveness(
-    indexer_service_opt: Option<Mailbox<IndexingService>>,
+    indexer_service_opt: Option<Mailbox<IndexingPipelineManager>>,
     janitor_service_opt: Option<Mailbox<JanitorService>>,
 ) -> impl warp::Reply {
     let mut is_live = true;

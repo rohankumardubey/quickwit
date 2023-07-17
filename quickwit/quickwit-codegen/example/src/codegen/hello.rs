@@ -42,6 +42,7 @@ pub struct PingResponse {
 }
 /// BEGIN quickwit-codegen
 use tower::{Layer, Service, ServiceExt};
+use quickwit_common::tower::BoxFuture;
 pub type HelloStream<T> = quickwit_common::ServiceStream<crate::HelloResult<T>>;
 #[cfg_attr(any(test, feature = "testsuite"), mockall::automock)]
 #[async_trait::async_trait]
@@ -134,7 +135,7 @@ impl Hello for HelloClient {
     }
 }
 #[cfg(any(test, feature = "testsuite"))]
-pub mod mock {
+pub mod hello_mock {
     use super::*;
     #[derive(Debug, Clone)]
     struct MockHelloWrapper {
@@ -170,9 +171,6 @@ pub mod mock {
         }
     }
 }
-pub type BoxFuture<T, E> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<T, E>> + Send + 'static>,
->;
 impl tower::Service<HelloRequest> for Box<dyn Hello> {
     type Response = HelloResponse;
     type Error = crate::HelloError;

@@ -20,7 +20,7 @@
 use std::convert::Infallible;
 
 use quickwit_actors::{AskError, Mailbox};
-use quickwit_indexing::actors::{IndexingService, IndexingServiceCounters};
+use quickwit_indexing::actors::{IndexingPipelineManager, IndexingServiceCounters};
 use quickwit_indexing::models::Observe;
 use warp::{Filter, Rejection};
 
@@ -42,7 +42,7 @@ pub struct IndexingApi;
 )]
 /// Observe Indexing Pipeline
 async fn indexing_endpoint(
-    indexing_service_mailbox: Mailbox<IndexingService>,
+    indexing_service_mailbox: Mailbox<IndexingPipelineManager>,
 ) -> Result<IndexingServiceCounters, AskError<Infallible>> {
     let counters = indexing_service_mailbox.ask(Observe).await?;
     Ok(counters)
@@ -53,7 +53,7 @@ fn indexing_get_filter() -> impl Filter<Extract = (), Error = Rejection> + Clone
 }
 
 pub fn indexing_get_handler(
-    indexing_service_mailbox_opt: Option<Mailbox<IndexingService>>,
+    indexing_service_mailbox_opt: Option<Mailbox<IndexingPipelineManager>>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     indexing_get_filter()
         .and(require(indexing_service_mailbox_opt))

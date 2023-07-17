@@ -46,6 +46,7 @@ use quickwit_indexing::models::{
     DetachIndexingPipeline, DetachMergePipeline, IndexingStatistics, SpawnPipeline,
 };
 use quickwit_indexing::IndexingPipeline;
+use quickwit_ingest::IngesterPool;
 use quickwit_storage::{BundleStorage, Storage};
 use thousands::Separable;
 use tracing::{debug, info};
@@ -340,7 +341,8 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
         runtimes_config,
         &HashSet::from_iter([QuickwitService::Indexer]),
     )?;
-    let indexing_server = IndexingService::new(
+    let ingester_pool = IngesterPool::default();
+    let indexing_pipeline_manager = IndexingPipelineManager::new(
         config.node_id.clone(),
         config.data_dir_path.clone(),
         indexer_config,
@@ -348,25 +350,26 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
         cluster,
         metastore,
         None,
+        ingester_pool,
         storage_resolver,
     )
     .await?;
     let universe = Universe::new();
-    let (indexing_server_mailbox, indexing_server_handle) =
-        universe.spawn_builder().spawn(indexing_server);
-    let pipeline_id = indexing_server_mailbox
+    let (indexing_pipeline_manager_mailbox, indexing_pipeline_manager_handle) =
+        universe.spawn_builder().spawn(indexing_pipeline_manager);
+    let pipeline_id = indexing_pipeline_manager_mailbox
         .ask_for_res(SpawnPipeline {
             index_id: args.index_id.clone(),
             source_config,
             pipeline_ord: 0,
         })
         .await?;
-    let merge_pipeline_handle = indexing_server_mailbox
+    let merge_pipeline_handle = indexing_pipeline_manager_mailbox
         .ask_for_res(DetachMergePipeline {
             pipeline_id: MergePipelineId::from(&pipeline_id),
         })
         .await?;
-    let indexing_pipeline_handle = indexing_server_mailbox
+    let indexing_pipeline_handle = indexing_pipeline_manager_mailbox
         .ask_for_res(DetachIndexingPipeline { pipeline_id })
         .await?;
 
@@ -386,9 +389,9 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
     merge_pipeline_handle.quit().await;
     // Shutdown the indexing server.
     universe
-        .send_exit_with_success(&indexing_server_mailbox)
+        .send_exit_with_success(&indexing_pipeline_manager_mailbox)
         .await?;
-    indexing_server_handle.join().await;
+    indexing_pipeline_manager_handle.join().await;
     universe.quit().await;
     if statistics.num_published_splits > 0 {
         println!(
@@ -434,7 +437,8 @@ pub async fn merge_cli(args: MergeArgs) -> anyhow::Result<()> {
     let indexer_config = IndexerConfig {
         ..Default::default()
     };
-    let indexing_server = IndexingService::new(
+    let ingester_pool = IngesterPool::default();
+    let indexing_pipeline_manager = IndexingPipelineManager::new(
         config.node_id,
         config.data_dir_path,
         indexer_config,
@@ -442,11 +446,12 @@ pub async fn merge_cli(args: MergeArgs) -> anyhow::Result<()> {
         cluster,
         metastore,
         None,
+        ingester_pool,
         storage_resolver,
     )
     .await?;
     let (indexing_service_mailbox, indexing_service_handle) =
-        universe.spawn_builder().spawn(indexing_server);
+        universe.spawn_builder().spawn(indexing_pipeline_manager);
     let pipeline_id = indexing_service_mailbox
         .ask_for_res(SpawnPipeline {
             index_id: args.index_id,

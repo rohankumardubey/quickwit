@@ -25,7 +25,8 @@ use quickwit_common::fs::{empty_dir, get_cache_directory_path};
 use quickwit_config::{validate_identifier, IndexConfig, SourceConfig};
 use quickwit_indexing::check_source_connectivity;
 use quickwit_metastore::{
-    IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, SplitInfo, SplitMetadata, SplitState,
+    EntityKind, IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, SplitInfo,
+    SplitMetadata, SplitState,
 };
 use quickwit_proto::{IndexUid, ServiceError, ServiceErrorCode};
 use quickwit_storage::{StorageResolver, StorageResolverError};
@@ -101,12 +102,7 @@ impl IndexService {
         // Delete existing index if it exists.
         if overwrite {
             match self.delete_index(&index_config.index_id, false).await {
-                Ok(_)
-                | Err(IndexServiceError::MetastoreError(MetastoreError::IndexDoesNotExist {
-                    index_id: _,
-                })) => {
-                    // Ignore IndexDoesNotExist error.
-                }
+                Ok(_) | Err(IndexServiceError::MetastoreError(MetastoreError::NotFound(_))) => {}
                 Err(error) => {
                     return Err(error);
                 }
@@ -118,6 +114,9 @@ impl IndexService {
         let index_uid = self.metastore.create_index(index_config).await?;
         self.metastore
             .add_source(index_uid.clone(), SourceConfig::ingest_api_default())
+            .await?;
+        self.metastore
+            .add_source(index_uid.clone(), SourceConfig::ingest_default())
             .await?;
         self.metastore
             .add_source(index_uid, SourceConfig::cli_ingest_source())
@@ -320,9 +319,9 @@ impl IndexService {
             .sources
             .get(source_id)
             .ok_or_else(|| {
-                IndexServiceError::MetastoreError(MetastoreError::SourceDoesNotExist {
+                IndexServiceError::MetastoreError(MetastoreError::NotFound(EntityKind::Source {
                     source_id: source_id.to_string(),
-                })
+                }))
             })?
             .clone();
 
@@ -384,7 +383,7 @@ mod tests {
             panic!("Expected `MetastoreError` variant, got {:?}", error)
         };
         assert!(
-            matches!(inner_error, MetastoreError::IndexAlreadyExists { index_id } if index_id == index_metadata_0.index_id())
+            matches!(inner_error, MetastoreError::AlreadyExists(EntityKind::Index { index_id }) if index_id == index_metadata_0.index_id())
         );
 
         let index_metadata_1 = index_service
@@ -442,7 +441,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(error, MetastoreError::IndexDoesNotExist { index_id } if index_id == index_uid.index_id())
+            matches!(error, MetastoreError::NotFound(EntityKind::Index { index_id }) if index_id == index_uid.index_id())
         );
         assert!(!storage.exists(split_path).await.unwrap());
     }

@@ -304,6 +304,7 @@ pub(crate) fn build_indexing_plan(
             indexing_tasks.push(IndexingTask {
                 index_uid: index_source_id.index_uid.to_string(),
                 source_id: index_source_id.source_id.clone(),
+                shard_ids: Vec::new(),
             });
         }
     }
@@ -415,6 +416,7 @@ mod tests {
                 IndexingTask {
                     index_uid: index_source_id.index_uid.to_string(),
                     source_id: index_source_id.source_id.to_string(),
+                    shard_ids: Vec::new(),
                 }
             );
         }
@@ -452,6 +454,7 @@ mod tests {
                 IndexingTask {
                     index_uid: index_source_id.index_uid.to_string(),
                     source_id: index_source_id.source_id.to_string(),
+                    shard_ids: Vec::new(),
                 }
             );
         }
@@ -498,7 +501,7 @@ mod tests {
                 max_num_pipelines_per_indexer: NonZeroUsize::new(1).unwrap(),
                 desired_num_pipelines: NonZeroUsize::new(3).unwrap(),
                 enabled: true,
-                source_params: SourceParams::IngestCli,
+                source_params: SourceParams::LocalIngest,
                 transform_config: None,
                 input_format: SourceInputFormat::Json,
             },
@@ -571,6 +574,7 @@ mod tests {
                 )
                 .to_string(),
                 source_id: source_1.to_string(),
+                shard_ids: Vec::new(),
             });
         }
         for _ in 0..2 {
@@ -581,6 +585,7 @@ mod tests {
                 )
                 .to_string(),
                 source_id: source_2.to_string(),
+                shard_ids: Vec::new(),
             });
         }
 
@@ -642,10 +647,12 @@ mod tests {
             IndexingTask {
                 index_uid: IndexUid::from_parts(index_1, "11111111111111111111111111").to_string(),
                 source_id: source_1.to_string(),
+                shard_ids: Vec::new(),
             },
             IndexingTask {
                 index_uid: IndexUid::from_parts(index_1, "11111111111111111111111111").to_string(),
                 source_id: source_1.to_string(),
+                shard_ids: Vec::new(),
             },
         ];
 

@@ -37,7 +37,9 @@ use tracing::warn;
 #[cfg(feature = "vrl")]
 use super::vrl_processing::*;
 use crate::actors::Indexer;
-use crate::models::{NewPublishLock, ProcessedDoc, ProcessedDocBatch, PublishLock, RawDocBatch};
+use crate::models::{
+    NewPublishLock, NewPublishToken, ProcessedDoc, ProcessedDocBatch, PublishLock, RawDocBatch,
+};
 
 const PLAIN_TEXT: &str = "plain_text";
 
@@ -425,6 +427,7 @@ impl Handler<RawDocBatch> for DocProcessor {
             docs: processed_docs,
             checkpoint_delta: raw_doc_batch.checkpoint_delta,
             force_commit: raw_doc_batch.force_commit,
+            publish_token: raw_doc_batch.assignee_id,
         };
         ctx.send_message(&self.indexer_mailbox, processed_doc_batch)
             .await?;
@@ -438,12 +441,26 @@ impl Handler<NewPublishLock> for DocProcessor {
 
     async fn handle(
         &mut self,
-        new_publish_lock: NewPublishLock,
+        message: NewPublishLock,
         ctx: &ActorContext<Self>,
     ) -> Result<(), ActorExitStatus> {
-        self.publish_lock = new_publish_lock.0.clone();
-        ctx.send_message(&self.indexer_mailbox, new_publish_lock)
-            .await?;
+        let NewPublishLock(publish_lock) = &message;
+        self.publish_lock = publish_lock.clone();
+        ctx.send_message(&self.indexer_mailbox, message).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Handler<NewPublishToken> for DocProcessor {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        message: NewPublishToken,
+        ctx: &ActorContext<Self>,
+    ) -> Result<(), ActorExitStatus> {
+        ctx.send_message(&self.indexer_mailbox, message).await?;
         Ok(())
     }
 }
@@ -589,6 +606,7 @@ mod tests {
                 ],
                 checkpoint_delta: SourceCheckpointDelta::from_range(0..2),
                 force_commit: false,
+                assignee_id: None,
             })
             .await?;
         universe
