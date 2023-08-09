@@ -5329,7 +5329,6 @@ dependencies = [
  "mrecordlog",
  "once_cell",
  "prost",
- "prost-build",
  "quickwit-actors",
  "quickwit-codegen",
  "quickwit-common",
@@ -5539,6 +5538,7 @@ version = "0.6.3"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "dyn-clone",
  "glob",
  "http",
