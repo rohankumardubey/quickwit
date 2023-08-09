@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cache_storage_controller::{CacheStorageController, CacheStorageServicePool};
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use quickwit_actors::{Mailbox, Universe};
 use quickwit_cache_storage::CacheStorageService;
 use quickwit_cluster::ClusterChange;
